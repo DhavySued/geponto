@@ -1,0 +1,44 @@
+# Mantém o projeto Supabase ativo (o plano Free pausa após ~7 dias sem atividade).
+# Secrets necessários (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL              ex.: https://xxxx.supabase.co
+#   SUPABASE_PUBLISHABLE_KEY  chave publishable (sb_publishable_...)
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: "0 11 * * *"   # diariamente às 08:00 (BRT)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping no banco (RPC api_ping)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::Configure os secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY."
+            exit 1
+          fi
+
+          for tentativa in 1 2 3; do
+            status=$(curl -sS -o resposta.json -w "%{http_code}" \
+              -X POST "$SUPABASE_URL/rest/v1/rpc/api_ping" \
+              -H "apikey: $SUPABASE_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{}') || status=000
+
+            echo "Tentativa $tentativa → HTTP $status"
+            cat resposta.json 2>/dev/null; echo
+
+            if [ "$status" = "200" ]; then
+              exit 0
+            fi
+            sleep 20
+          done
+
+          echo "::error::Supabase não respondeu ao ping."
+          exit 1

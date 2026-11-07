@@ -1,0 +1,17 @@
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+*.local.sql
+.DS_Store
+Thumbs.db
+*.log
+*.tsbuildinfo
+.vscode/*
+!.vscode/extensions.json
+.idea
+.claude/
+
+# prints de referência (podem conter dados de pessoas reais)
+tela consulta de batidas.png
