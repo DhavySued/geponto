@@ -38,8 +38,6 @@ jobs:
             exit 1
           fi
           npm run build
-          # Ao recarregar uma tela (F5), o Pages entrega o 404.html, que abre o sistema na rota certa.
-          cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

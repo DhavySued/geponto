@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { ToastProvider } from '@/components/ui/Toast';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
@@ -70,7 +70,7 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <HashRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
@@ -97,7 +97,7 @@ export default function App() {
               <Route path="*" element={<NaoEncontrada />} />
             </Route>
           </Routes>
-        </BrowserRouter>
+        </HashRouter>
       </ToastProvider>
     </AuthProvider>
   );
