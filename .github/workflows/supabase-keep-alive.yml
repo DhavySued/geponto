@@ -1,7 +1,5 @@
 # Mantém o projeto Supabase ativo (o plano Free pausa após ~7 dias sem atividade).
-# Secrets necessários (Settings → Secrets and variables → Actions):
-#   SUPABASE_URL              ex.: https://xxxx.supabase.co
-#   SUPABASE_PUBLISHABLE_KEY  chave publishable (sb_publishable_...)
+# A URL e a chave publishable vêm do arquivo .env.production (mesmo do site publicado).
 name: Supabase keep-alive
 
 on:
@@ -14,13 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .env.production
+          sparse-checkout-cone-mode: false
       - name: Ping no banco (RPC api_ping)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          SUPABASE_URL=$(grep -E '^VITE_SUPABASE_URL=' .env.production | cut -d= -f2- | tr -d '\r ')
+          SUPABASE_KEY=$(grep -E '^VITE_SUPABASE_PUBLISHABLE_KEY=' .env.production | cut -d= -f2- | tr -d '\r ')
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
-            echo "::error::Configure os secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY."
+            echo "::error::Preencha VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no .env.production."
             exit 1
           fi
 
