@@ -1,6 +1,6 @@
 import type { PerfilEvento } from './types';
 
-/** Dias do percentual de hora extra, na ordem da tela (0 = domingo … 6 = sábado, 7 = feriado) */
+/** Dias do percentual de hora extra, na ordem da tela (0 = domingo … 6 = sábado, 7 = feriado, 8 = folga) */
 export const DIAS_HE: { dia: number; nome: string; curto: string }[] = [
   { dia: 1, nome: 'Segunda', curto: 'Seg' },
   { dia: 2, nome: 'Terça', curto: 'Ter' },
@@ -10,6 +10,7 @@ export const DIAS_HE: { dia: number; nome: string; curto: string }[] = [
   { dia: 6, nome: 'Sábado', curto: 'Sáb' },
   { dia: 0, nome: 'Domingo', curto: 'Dom' },
   { dia: 7, nome: 'Feriado', curto: 'Fer' },
+  { dia: 8, nome: 'Folga', curto: 'Flg' },
 ];
 
 export function novoPerfilEvento(): PerfilEvento {
@@ -20,6 +21,7 @@ export function novoPerfilEvento(): PerfilEvento {
     tolerancia_entrada_min: 5,
     tolerancia_saida_min: 5,
     tolerancia_diaria_min: 10,
+    tolerancia_modo: 'batida',
     limite_he_diario_min: 120,
     usa_banco_horas: true,
     noturno_inicio: '22:00',
@@ -27,7 +29,17 @@ export function novoPerfilEvento(): PerfilEvento {
     percentual_noturno: 20,
     hora_noturna_reduzida: true,
     ativo: true,
-    he: [0, 1, 2, 3, 4, 5, 6, 7].map((dia) => ({ dia, percentual: dia === 0 || dia === 7 ? 100 : 50 })),
+    he: DIAS_HE.map(({ dia }) => ({ dia, percentual: dia === 0 || dia >= 7 ? 100 : 50 })),
+  };
+}
+
+/** Garante os 9 percentuais (perfis antigos podem vir sem a folga: assume o do domingo) */
+export function completarPerfil(p: PerfilEvento): PerfilEvento {
+  const pct = (dia: number) => p.he.find((h) => h.dia === dia)?.percentual;
+  return {
+    ...p,
+    tolerancia_modo: p.tolerancia_modo ?? 'batida',
+    he: DIAS_HE.map(({ dia }) => ({ dia, percentual: pct(dia) ?? (dia === 8 ? pct(0) ?? 100 : 50) })),
   };
 }
 

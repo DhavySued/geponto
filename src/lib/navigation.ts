@@ -4,6 +4,7 @@ import {
   BarChart3,
   CalendarClock,
   CalendarHeart,
+  CalendarRange,
   CalendarSearch,
   ClipboardList,
   Clock3,
@@ -47,7 +48,7 @@ export const NAVEGACAO: NavGroup[] = [
       {
         chave: 'meu_ponto',
         titulo: 'Registrar ponto',
-        descricao: 'Registre suas marcações, peça ajustes e consulte seu espelho',
+        descricao: 'Registre suas marcações e acompanhe as batidas do dia',
         path: '/meu-ponto',
         icon: Timer,
       },
@@ -126,6 +127,13 @@ export const NAVEGACAO: NavGroup[] = [
         descricao: 'Inclusão, edição, exclusão e desconsideração de batidas com motivo',
         path: '/movimentos/lancamento-manual',
         icon: PenLine,
+      },
+      {
+        chave: 'escalas',
+        titulo: 'Escalas',
+        descricao: 'Previsão de trabalho ou folga em dias específicos, fora do padrão da jornada',
+        path: '/movimentos/escalas',
+        icon: CalendarRange,
       },
       {
         chave: 'ocorrencias',

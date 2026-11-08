@@ -197,7 +197,7 @@ begin
         from (
           select c.id, c.nome, c.matricula, c.situacao,
                  d.nome as departamento, j.nome as jornada,
-                 fn_horario_texto(a.jornada_id, v_data) as horario_previsto,
+                 fn_horario_dia(c.id, v_data) as horario_previsto,
                  a.previsto_min,
                  fn_trabalhado_ao_vivo(c.id, v_data, a.trabalhado_min) as trabalhado_min,
                  a.atraso_min, a.saldo_min, a.ocorrencia,
@@ -221,7 +221,8 @@ begin
                   case when a.qtd_batidas = 0 then 'ausente'
                        when a.impar then 'inconsistente'
                        else 'finalizado' end
-                when a.qtd_batidas = 0 and v_agora > jd.entrada + make_interval(mins => coalesce(pe.tolerancia_entrada_min, 0))
+                when a.qtd_batidas = 0 and v_agora > jd.entrada + make_interval(mins => coalesce(
+                       case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else pe.tolerancia_entrada_min end, 0))
                   then 'ausente'
                 when a.qtd_batidas = 0 then 'aguardando'
                 when a.ultimo_sentido = 'E' then 'em_jornada'
@@ -465,7 +466,7 @@ begin
                  'dias', coalesce((
                    select jsonb_agg(jsonb_build_object(
                             'data', a.data,
-                            'horario_previsto', case when a.previsto_min > 0 then fn_horario_texto(a.jornada_id, a.data) end,
+                            'horario_previsto', case when a.previsto_min > 0 then fn_horario_dia(a.colaborador_id, a.data) end,
                             'ocorrencia', a.ocorrencia,
                             'previsto_min', a.previsto_min,
                             'trabalhado_min', a.trabalhado_min,

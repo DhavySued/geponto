@@ -272,16 +272,39 @@ returns smallint language sql immutable as $$
               else extract(dow from p_data) end::smallint;
 $$;
 
--- Horário previsto do colaborador em uma data (jornada vigente + escala)
+-- Horário previsto do colaborador em uma data: jornada vigente (dia da semana ou do ciclo),
+-- substituída pela escala do dia quando houver (tabela escalas: trabalho com horários ou folga).
+-- escala = 'trabalho' | 'folga' | null (dia seguindo a jornada)
 drop function if exists fn_jornada_dia(uuid, date);
 create function fn_jornada_dia(p_colaborador uuid, p_data date)
-returns table (jornada_id uuid, folga boolean, entrada time, saida_intervalo time, retorno_intervalo time, saida time)
+returns table (jornada_id uuid, folga boolean, entrada time, saida_intervalo time, retorno_intervalo time, saida time,
+               escala text)
 language sql stable set search_path = public as $$
-  select j.id, coalesce(jd.folga, true), jd.entrada, jd.saida_intervalo, jd.retorno_intervalo, jd.saida
-    from jornadas j
+  select j.id,
+         case when e.id is not null then e.tipo = 'folga' else coalesce(jd.folga, true) end,
+         case when e.id is not null then e.entrada else jd.entrada end,
+         case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end,
+         case when e.id is not null then e.retorno_intervalo else jd.retorno_intervalo end,
+         case when e.id is not null then e.saida else jd.saida end,
+         e.tipo
+    from (select fn_jornada_vigente(p_colaborador, p_data) as id) v
+    left join jornadas j      on j.id = v.id
     left join jornada_dias jd on jd.jornada_id = j.id
                              and jd.dia_semana = fn_jornada_indice(j.tipo, j.ciclo_dias, j.data_base, p_data)
-   where j.id = fn_jornada_vigente(p_colaborador, p_data);
+    left join escalas e       on e.colaborador_id = p_colaborador and e.data = p_data
+   where j.id is not null or e.id is not null;
+$$;
+
+-- Horário previsto do colaborador em texto, já com a escala do dia (null = sem previsão)
+create or replace function fn_horario_dia(p_colaborador uuid, p_data date)
+returns text language sql stable set search_path = public as $$
+  select case when jd.folga or jd.entrada is null then null
+              when jd.saida_intervalo is null
+                then to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
+              else to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida_intervalo, 'HH24:MI')
+                   || ' · ' || to_char(jd.retorno_intervalo, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
+         end
+    from fn_jornada_dia(p_colaborador, p_data) jd;
 $$;
 
 -- Horário previsto em texto: "08:00–12:00 · 13:00–17:00" (null = folga)
@@ -470,14 +493,15 @@ returns table (
   abonado_min           integer,   -- abono parcial efetivamente aplicado
   extra_min             integer,   -- saldo positivo (hora extra / crédito)
   debito_min            integer,   -- saldo negativo em módulo (horas faltantes / débito)
-  he_percentual         numeric,   -- percentual de HE do dia, pelo perfil de eventos (dia da semana ou feriado)
+  he_percentual         numeric,   -- percentual de HE do dia, pelo perfil de eventos (feriado, folga ou dia da semana)
   noturno_min           integer,   -- minutos de relógio na faixa noturna
   noturno_reduzido_min  integer,   -- com a hora noturna reduzida (52min30s), quando aplicável
   intervalo_min         integer,   -- descanso intrajornada realizado
   interjornada_min      integer,   -- descanso desde a última batida do dia anterior trabalhado
   banco_horas           boolean,   -- o saldo do dia vai para o banco de horas (senão: HE/desconto)
-  feriado               boolean,
-  fechado               boolean    -- dia dentro de um período fechado
+  feriado               boolean,   -- feriado valendo para o colaborador (escala de trabalho no dia anula)
+  fechado               boolean,   -- dia dentro de um período fechado
+  escala                text       -- escala do dia: 'trabalho', 'folga' ou null (segue a jornada)
 )
 language sql stable set search_path = public as $$
 with cfg as (
@@ -494,13 +518,29 @@ dias as (
      and (c.data_desligamento is null or c.data_desligamento >= d::date)
 ),
 base as (
+  -- A escala do dia (tabela escalas) substitui o dia da jornada: 'trabalho' cria a previsão com os
+  -- horários dela, mesmo em folga ou feriado (o feriado deixa de valer para o colaborador nesse dia);
+  -- 'folga' zera a previsão.
   select dd.colaborador_id, dd.data, dd.jornada_id,
-         jd.folga, jd.entrada, jd.saida, jd.saida_intervalo, jd.retorno_intervalo,
-         pe.tolerancia_entrada_min, pe.tolerancia_saida_min, pe.tolerancia_diaria_min,
+         case when e.id is not null then e.tipo = 'folga' else jd.folga end as folga,
+         case when e.id is not null then e.entrada else jd.entrada end as entrada,
+         case when e.id is not null then e.saida else jd.saida end as saida,
+         case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end as saida_intervalo,
+         case when e.id is not null then e.retorno_intervalo else jd.retorno_intervalo end as retorno_intervalo,
+         e.tipo as escala,
+         -- Modo de tolerância do perfil: 'batida' usa entrada/saída em cada marcação (a marcação dentro
+         -- dela conta como o horário previsto); 'diaria' usa só a geral do dia, sobre o saldo e como
+         -- limite para apontar atraso/saída antecipada.
+         coalesce(pe.tolerancia_modo, 'batida') as tolerancia_modo,
+         case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else pe.tolerancia_entrada_min end
+           as tolerancia_entrada_min,
+         case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else pe.tolerancia_saida_min end
+           as tolerancia_saida_min,
+         case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else 0 end as tolerancia_diaria_min,
          pe.hora_noturna_reduzida,
          coalesce(pe.usa_banco_horas, false) as usa_bh,
          coalesce(ph.percentual, 50) as he_percentual,
-         (f.id is not null) as feriado,
+         (f.id is not null and e.tipo is distinct from 'trabalho') as feriado,
          a.tipo as ausencia_tipo,
          coalesce(a.abona, false) as abona,
          coalesce(ap.minutos, 0) as abono_parcial
@@ -508,10 +548,14 @@ base as (
     left join jornadas j      on j.id = dd.jornada_id
     left join jornada_dias jd on jd.jornada_id = dd.jornada_id
                              and jd.dia_semana = fn_jornada_indice(j.tipo, j.ciclo_dias, j.data_base, dd.data)
+    left join escalas e       on e.colaborador_id = dd.colaborador_id and e.data = dd.data
     left join feriados f      on f.data = dd.data
     left join perfis_eventos pe on pe.id = dd.perfil_id
     left join perfil_evento_he ph on ph.perfil_id = dd.perfil_id
-                                 and ph.dia = case when f.id is not null then 7 else extract(dow from dd.data)::int end
+                                 and ph.dia = case when f.id is not null and e.tipo is distinct from 'trabalho' then 7
+                                                   when coalesce(case when e.id is not null then e.tipo = 'folga'
+                                                                      else jd.folga end, true) then 8
+                                                   else extract(dow from dd.data)::int end
     left join lateral (
       select au.tipo, au.abona
         from ausencias au
@@ -552,6 +596,27 @@ pares as (
        where s.sent = 'E' and s.prox_sent = 'S' and s.prox_tur = s.tur
     ) p
 ),
+-- Tolerância por batida: a marcação dentro da tolerância do horário previsto conta como o próprio
+-- horário previsto (E1 entrada · S1 saída p/ intervalo ou saída · E2 retorno · S2 saída).
+pares_aj as (
+  select p.*,
+         case when pv.e is not null and abs(extract(epoch from p.ini - pv.e) / 60) <= bs.tolerancia_entrada_min
+              then pv.e else p.ini end as ini_aj,
+         case when pv.s is not null and abs(extract(epoch from p.fim - pv.s) / 60) <= bs.tolerancia_saida_min
+              then pv.s else p.fim end as fim_aj
+    from pares p
+   cross join cfg
+    left join base bs on bs.colaborador_id = p.colaborador_id and bs.data = p.data_referencia
+    left join lateral (
+      select (bs.data + h.e + case when h.e < bs.entrada then interval '1 day' else interval '0' end) at time zone cfg.tz as e,
+             (bs.data + h.s + case when h.s <= bs.entrada then interval '1 day' else interval '0' end) at time zone cfg.tz as s
+        from (select case p.tur when 1 then bs.entrada when 2 then bs.retorno_intervalo end as e,
+                     case p.tur when 1 then coalesce(bs.saida_intervalo, bs.saida)
+                                when 2 then case when bs.saida_intervalo is not null then bs.saida end end as s) h
+       where bs.tolerancia_modo = 'batida' and not coalesce(bs.folga, true) and not bs.feriado
+         and bs.entrada is not null
+    ) pv on true
+),
 marc as (
   select s.colaborador_id, s.data_referencia as data,
          count(*)::int as qtd,
@@ -567,11 +632,11 @@ marc_pares as (
          count(*)::int as pares,
          min(p.ini) as primeiro_ini,
          (array_agg(p.tur order by p.ini))[1] as primeiro_tur,
-         sum(extract(epoch from p.fim - p.ini) / 60)::int as trabalhado,
+         sum(extract(epoch from greatest(p.fim_aj - p.ini_aj, interval '0')) / 60)::int as trabalhado,
          sum(fn_minutos_noturnos(p.ini at time zone cfg.tz, p.fim at time zone cfg.tz,
                                  coalesce(pe.noturno_inicio, '22:00'), coalesce(pe.noturno_fim, '05:00')))::int as noturno,
          (sum(extract(epoch from p.pausa) / 60))::int as pausa
-    from pares p
+    from pares_aj p
    cross join cfg
     left join colaboradores co  on co.id = p.colaborador_id
     left join perfis_eventos pe on pe.id = co.perfil_evento_id
@@ -583,7 +648,7 @@ marc_inter as (
 ),
 calc as (
   select bs.*,
-         case when bs.jornada_id is null or coalesce(bs.folga, true) or bs.feriado or bs.abona then 0
+         case when (bs.jornada_id is null and bs.escala is null) or coalesce(bs.folga, true) or bs.feriado or bs.abona then 0
               else fn_minutos(bs.entrada, bs.saida)
                    - coalesce(fn_minutos(bs.saida_intervalo, bs.retorno_intervalo), 0)
          end as previsto,
@@ -648,7 +713,7 @@ select f.colaborador_id,
        f.qtd,
        f.primeira::time,
        f.e_falta,
-       case when f.jornada_id is null          then 'sem_jornada'
+       case when f.jornada_id is null and f.escala is null then 'sem_jornada'
             when f.ausencia_tipo is not null   then 'ausencia:' || f.ausencia_tipo
             when f.feriado and f.qtd = 0       then 'feriado'
             when coalesce(f.folga, true) and f.qtd = 0 then 'folga'
@@ -673,7 +738,8 @@ select f.colaborador_id,
        f.interjornada,
        f.usa_bh,
        f.feriado,
-       f.fechado
+       f.fechado,
+       f.escala
   from fin f;
 $$;
 
@@ -773,6 +839,23 @@ drop trigger if exists trg_ausencias_reprocessar on ausencias;
 create trigger trg_ausencias_reprocessar after insert or update or delete on ausencias
   for each row execute function fn_ausencias_reprocessar();
 
+-- Escala lançada/alterada/removida em dia já encerrado → recalcula aquele dia
+create or replace function fn_escalas_reprocessar()
+returns trigger language plpgsql as $$
+begin
+  if tg_op in ('UPDATE', 'DELETE') and old.data < fn_hoje() then
+    perform fn_processar_banco_horas(old.data, old.data, old.colaborador_id);
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and new.data < fn_hoje() then
+    perform fn_processar_banco_horas(new.data, new.data, new.colaborador_id);
+  end if;
+  return null;
+end $$;
+
+drop trigger if exists trg_escalas_reprocessar on escalas;
+create trigger trg_escalas_reprocessar after insert or update or delete on escalas
+  for each row execute function fn_escalas_reprocessar();
+
 -- -----------------------------------------------------------------------------
 -- Fechamento de período: bloqueia alterações no ponto de dias fechados
 -- (vale para qualquer caminho de escrita, não só para a API). A exclusão em cascata
@@ -811,6 +894,12 @@ begin
        or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
       raise exception 'O dia % está em um período fechado.', to_char(coalesce(new.data, old.data), 'DD/MM/YYYY');
     end if;
+  elsif tg_table_name = 'escalas' then
+    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data)
+       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
+      raise exception 'O dia % está em um período fechado. Reabra o período para alterar a escala.',
+        to_char(coalesce(new.data, old.data), 'DD/MM/YYYY');
+    end if;
   end if;
   return coalesce(new, old);
 end $$;
@@ -821,6 +910,10 @@ create trigger trg_batidas_fechamento before insert or update or delete on batid
 
 drop trigger if exists trg_ausencias_fechamento on ausencias;
 create trigger trg_ausencias_fechamento before insert or update or delete on ausencias
+  for each row execute function fn_bloquear_periodo_fechado();
+
+drop trigger if exists trg_escalas_fechamento on escalas;
+create trigger trg_escalas_fechamento before insert or update or delete on escalas
   for each row execute function fn_bloquear_periodo_fechado();
 
 drop trigger if exists trg_banco_horas_fechamento on banco_horas;
@@ -965,7 +1058,9 @@ begin
                 when a.ocorrencia like 'ausencia:%' then 'ausencia'
                 when a.previsto_min = 0 and a.qtd_batidas = 0 then 'folga'
                 when a.qtd_batidas = 0 and v_agora > jd.entrada + make_interval(mins => coalesce(
-                       (select pe.tolerancia_entrada_min from perfis_eventos pe where pe.id = c.perfil_evento_id), 0))
+                       (select case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min
+                                    else pe.tolerancia_entrada_min end
+                          from perfis_eventos pe where pe.id = c.perfil_evento_id), 0))
                   then 'ausente'
                 when a.qtd_batidas = 0 then 'aguardando'
                 when a.ultimo_sentido = 'E' then 'em_jornada'

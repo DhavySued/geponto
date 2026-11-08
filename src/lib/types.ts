@@ -5,6 +5,7 @@ export type PaginaChave =
   | 'usuarios'
   | 'jornadas'
   | 'perfis_eventos'
+  | 'escalas'
   | 'batidas'
   | 'banco_horas'
   | 'banco_horas_conversao'
@@ -233,7 +234,7 @@ export interface Jornada {
   dias: JornadaDia[];
 }
 
-/** Percentual de hora extra de um dia: 0 = domingo … 6 = sábado, 7 = feriado */
+/** Percentual de hora extra de um dia: 0 = domingo … 6 = sábado, 7 = feriado, 8 = folga */
 export interface PerfilEventoHe {
   dia: number;
   percentual: number;
@@ -248,6 +249,8 @@ export interface PerfilEvento {
   tolerancia_entrada_min: number;
   tolerancia_saida_min: number;
   tolerancia_diaria_min: number;
+  /** 'batida': tolerância de entrada/saída em cada marcação · 'diaria': só a geral do dia */
+  tolerancia_modo: 'batida' | 'diaria';
   limite_he_diario_min: number;
   usa_banco_horas: boolean;
   noturno_inicio: string;
@@ -700,6 +703,8 @@ export interface PreviaFechamento {
 export interface EspelhoDia {
   data: string;
   previsto: string | null;
+  /** Escala lançada no dia (fora do padrão da jornada) */
+  escala?: TipoEscala | null;
   previsto_min: number;
   trabalhado_min: number;
   extra_min: number;
@@ -915,4 +920,47 @@ export interface MeuDashboardData {
   dias: MeuDashboardDia[];
   solicitacoes_pendentes: number;
   pode_registrar: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Escalas (previsão de trabalho ou folga em dias específicos)
+// ---------------------------------------------------------------------------
+export type TipoEscala = 'trabalho' | 'folga';
+
+export interface HorarioDia {
+  entrada: string | null;
+  saida_intervalo: string | null;
+  retorno_intervalo: string | null;
+  saida: string | null;
+}
+
+export interface Escala extends HorarioDia {
+  id: string;
+  tipo: TipoEscala;
+  observacao: string | null;
+  usuario: string | null;
+}
+
+/** Um dia da grade: o padrão da jornada (sem a escala) e a escala lançada */
+export interface EscalaDia extends HorarioDia {
+  data: string;
+  jornada_folga: boolean;
+  escala: Escala | null;
+}
+
+export interface EscalaColaborador {
+  id: string;
+  nome: string;
+  matricula: string;
+  departamento: string | null;
+  jornada: string | null;
+  inicio: string;
+  desligamento: string | null;
+  dias: EscalaDia[];
+}
+
+export interface EscalasGrade {
+  feriados: { data: string; descricao: string }[];
+  fechado_ate: string | null;
+  colaboradores: EscalaColaborador[];
 }

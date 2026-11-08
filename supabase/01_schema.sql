@@ -313,6 +313,28 @@ create table if not exists ausencias (
 );
 create index if not exists ix_ausencias_periodo on ausencias (colaborador_id, data_inicio, data_fim);
 
+-- Escalas: exceção à jornada em um dia específico do colaborador
+--   trabalho → o dia tem previsão com os horários informados, mesmo que a jornada diga folga ou o dia seja feriado
+--   folga    → o dia não tem previsão, mesmo que a jornada diga trabalho
+create table if not exists escalas (
+  id                 uuid primary key default gen_random_uuid(),
+  colaborador_id     uuid not null references colaboradores(id) on delete cascade,
+  data               date not null,
+  tipo               text not null check (tipo in ('trabalho', 'folga')),
+  entrada            time,
+  saida_intervalo    time,
+  retorno_intervalo  time,
+  saida              time,
+  observacao         text,
+  usuario_id         uuid references usuarios(id) on delete set null,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  unique (colaborador_id, data),
+  check (tipo = 'folga' or (entrada is not null and saida is not null)),
+  check ((saida_intervalo is null) = (retorno_intervalo is null))
+);
+create index if not exists ix_escalas_data on escalas (data);
+
 -- -----------------------------------------------------------------------------
 -- Batidas (marcações de ponto)
 -- -----------------------------------------------------------------------------
@@ -677,6 +699,8 @@ create table if not exists perfis_eventos (
   tolerancia_entrada_min  smallint not null default 5  check (tolerancia_entrada_min >= 0),
   tolerancia_saida_min    smallint not null default 5  check (tolerancia_saida_min >= 0),
   tolerancia_diaria_min   smallint not null default 10 check (tolerancia_diaria_min >= 0),
+  -- 'batida': tolerância de entrada/saída em cada marcação · 'diaria': só a tolerância geral do dia
+  tolerancia_modo         text not null default 'batida',
   limite_he_diario_min    smallint not null default 120 check (limite_he_diario_min >= 0),
   usa_banco_horas         boolean not null default true,
   noturno_inicio          time not null default '22:00',
@@ -691,10 +715,22 @@ create unique index if not exists ux_perfis_eventos_padrao on perfis_eventos (pa
 
 create table if not exists perfil_evento_he (
   perfil_id   uuid not null references perfis_eventos(id) on delete cascade,
-  dia         smallint not null check (dia between 0 and 7),   -- 0 = domingo … 6 = sábado, 7 = feriado
+  dia         smallint not null check (dia between 0 and 8),   -- 0 = domingo … 6 = sábado, 7 = feriado, 8 = folga
   percentual  numeric(5,2) not null check (percentual >= 0),
   primary key (perfil_id, dia)
 );
+
+-- Modo de tolerância (por batida ou geral do dia) e percentual de HE da folga (dia 8)
+alter table perfis_eventos add column if not exists tolerancia_modo text not null default 'batida';
+alter table perfis_eventos drop constraint if exists perfis_eventos_tolerancia_modo_check;
+alter table perfis_eventos add constraint perfis_eventos_tolerancia_modo_check
+  check (tolerancia_modo in ('batida', 'diaria'));
+alter table perfil_evento_he drop constraint if exists perfil_evento_he_dia_check;
+alter table perfil_evento_he add constraint perfil_evento_he_dia_check check (dia between 0 and 8);
+
+drop trigger if exists trg_escalas_updated on escalas;
+create trigger trg_escalas_updated before update on escalas
+  for each row execute function fn_set_updated_at();
 
 drop trigger if exists trg_perfis_eventos_updated on perfis_eventos;
 create trigger trg_perfis_eventos_updated before update on perfis_eventos
@@ -735,8 +771,8 @@ begin
       returning id into v_id;
 
       insert into perfil_evento_he (perfil_id, dia, percentual)
-      select v_id, d, case when d in (0, 7) then r.he_dom else r.he_util end
-        from generate_series(0, 7) d;
+      select v_id, d, case when d in (0, 7, 8) then r.he_dom else r.he_util end
+        from generate_series(0, 8) d;
 
       update colaboradores set perfil_evento_id = v_id
        where jornada_id = any(r.ids) and perfil_evento_id is null;
@@ -749,8 +785,8 @@ begin
       from (select 'he_' || replace(trim_scale(h.percentual)::text, '.', '_') as chave,
                    'Horas extras ' || replace(trim_scale(h.percentual)::text, '.', ',') || '%' as descricao,
                    least(29, 10 + round(h.percentual / 10))::smallint as ordem,
-                   case when h.dia in (0, 7) then 'he_especial' else 'he_util' end as origem,
-                   case when h.dia in (0, 7) then 2 else 1 end as prioridade
+                   case when h.dia in (0, 7, 8) then 'he_especial' else 'he_util' end as origem,
+                   case when h.dia in (0, 7, 8) then 2 else 1 end as prioridade
               from perfil_evento_he h) k
       left join eventos_folha e on e.chave = k.origem
      order by k.chave, (e.codigo is null), k.prioridade
@@ -765,7 +801,7 @@ begin
     alter table colaboradores enable trigger trg_colaboradores_historico;
   end if;
 
-  -- Sempre existe um perfil padrão, e todo perfil tem os 8 percentuais
+  -- Sempre existe um perfil padrão, e todo perfil tem os 9 percentuais
   if not exists (select 1 from perfis_eventos) then
     insert into perfis_eventos (nome, padrao) values ('Padrão', true);
   end if;
@@ -773,9 +809,13 @@ begin
     update perfis_eventos set padrao = true
      where id = (select id from perfis_eventos where ativo order by created_at, nome limit 1);
   end if;
+  -- Folga (dia 8) nasce com o percentual do domingo do próprio perfil
   insert into perfil_evento_he (perfil_id, dia, percentual)
-  select p.id, d, case when d in (0, 7) then 100 else 50 end
-    from perfis_eventos p cross join generate_series(0, 7) d
+  select h.perfil_id, 8, h.percentual from perfil_evento_he h where h.dia = 0
+  on conflict (perfil_id, dia) do nothing;
+  insert into perfil_evento_he (perfil_id, dia, percentual)
+  select p.id, d, case when d in (0, 7, 8) then 100 else 50 end
+    from perfis_eventos p cross join generate_series(0, 8) d
   on conflict (perfil_id, dia) do nothing;
 
   alter table colaboradores disable trigger trg_colaboradores_historico;
@@ -833,6 +873,7 @@ alter table solicitacoes          enable row level security;
 alter table eventos_folha         enable row level security;
 alter table perfis_eventos        enable row level security;
 alter table perfil_evento_he      enable row level security;
+alter table escalas               enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;

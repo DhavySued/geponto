@@ -25,7 +25,7 @@ No **SQL Editor** do Supabase, execute nesta ordem:
 | `supabase/05_api_cadastros.sql` | API dos cadastros de colaboradores, departamentos, cargos, jornadas e perfis de eventos |
 | `supabase/06_api_ponto.sql` | Meu Ponto (registro pelo colaborador), banco de horas e conversão do saldo |
 | `supabase/07_api_tratamento.sql` | Tratamento e consulta de batidas (incluir, editar, apagar, desconsiderar, sentido, data de referência) |
-| `supabase/08_api_fortes.sql` | Feriados, ocorrências em lote, fechamento, espelho, totais/folha e quebra de regras |
+| `supabase/08_api_fortes.sql` | Feriados, ocorrências em lote, escalas, fechamento, espelho, totais/folha e quebra de regras |
 | `supabase/09_api_usuarios.sql` | Usuários & Permissões (perfis, abrangência, acessos em lote), dashboard pessoal e registro rápido de ponto |
 | `supabase/99_admin.local.sql` | Usuário administrador (arquivo local, fora do Git) |
 
@@ -53,7 +53,7 @@ Todos os scripts podem ser executados de novo sem erro. Para atualizar um banco 
 
 `empresa`, `paginas`, `perfis`, `perfil_permissoes`, `usuarios`, `sessoes`, `departamentos`, `cargos`,
 `jornadas`, `jornada_dias`, `perfis_eventos`, `perfil_evento_he`, `feriados`, `colaboradores`, `colaborador_historico`,
-`colaborador_jornadas`, `ausencias`, `batidas`, `batida_ajustes`, `motivos_batida`, `banco_horas`, `fechamentos`,
+`colaborador_jornadas`, `escalas`, `ausencias`, `batidas`, `batida_ajustes`, `motivos_batida`, `banco_horas`, `fechamentos`,
 `solicitacoes`, `eventos_folha`.
 
 ### Jornada × perfil de eventos
@@ -67,9 +67,21 @@ Todos os scripts podem ser executados de novo sem erro. Para atualizar um banco 
 - Ao atualizar um banco antigo, o `01_schema.sql` cria os perfis a partir das regras que estavam nas jornadas
   (um perfil por combinação de regras; o mais usado vira "Padrão") e vincula cada colaborador ao perfil da sua jornada.
 
+### Escalas (exceções à jornada)
+
+- Em Movimentos › Escalas, o RH lança, para um ou vários colaboradores, um dia **de trabalho** (com horários) ou **de folga**
+  fora do padrão da jornada. A tela mostra uma grade colaborador × dia; clique nos dias para selecionar, ou use "Lançar por período"
+  (com filtro de dias da semana).
+- **Escala de trabalho:** o dia passa a ter previsão normal com os horários da escala, mesmo que a jornada diga folga ou que seja
+  feriado (para esse colaborador, o feriado deixa de valer naquele dia). Só o que passar da previsão é hora extra, com o percentual
+  do dia da semana no perfil de eventos. Sem batidas, é falta.
+- **Escala de folga:** o dia fica sem previsão, mesmo sendo dia de trabalho na jornada; o que for trabalhado é hora extra.
+- A escala vale em todo o sistema (`fn_jornada_dia`): apuração, banco de horas, consulta e tratamento de batidas, espelho
+  (marca **E**) e painéis. Lançar ou remover escala em dia passado recalcula o banco daquele dia; períodos fechados não mudam.
+
 ### Regras de apuração (`fn_apuracao`)
 
-- A jornada prevista sai de `jornada_dias`. Ela é zerada em folgas, feriados e ausências que abonam.
+- A jornada prevista sai de `jornada_dias`, ou da escala do dia quando houver. Ela é zerada em folgas, feriados (sem escala de trabalho) e ausências que abonam.
 - **Escalas:** jornada `semanal` usa o dia da semana; jornada `escala` (12x36, 5x1, 6x2…) usa o dia do ciclo,
   contado a partir de `data_base` (`fn_jornada_indice`).
 - **Virada de turno:** batida até 4h depois da saída de um turno que atravessa a meia-noite conta no dia em que ele começou.

@@ -39,7 +39,7 @@ create or replace function api_filtros_auxiliares(p_token text)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_usuario uuid := fn_auth_alguma(p_token, array['ocorrencias', 'solicitacoes', 'fechamento', 'espelho_ponto',
-                                                   'totais_periodo', 'quebra_regras', 'feriados']);
+                                                   'totais_periodo', 'quebra_regras', 'feriados', 'escalas']);
 begin
   return jsonb_build_object(
     'empresa', (select jsonb_build_object('razao_social', razao_social, 'nome_fantasia', nome_fantasia, 'cnpj', cnpj)
@@ -235,6 +235,153 @@ begin
   delete from ausencias where id = p_id and fn_visivel(colaborador_id);
   if not found then raise exception 'Ocorrência não encontrada.'; end if;
   return jsonb_build_object('ok', true);
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Escalas: previsão de trabalho ou folga em dias específicos, fora do padrão da jornada
+--   trabalho → o dia passa a ter previsão normal (mesmo em folga da jornada ou feriado)
+--   folga    → o dia fica sem previsão (mesmo sendo dia de trabalho na jornada)
+-- -----------------------------------------------------------------------------
+
+-- Grade do período: por colaborador e dia, o padrão da jornada, o feriado e a escala lançada
+create or replace function api_escalas_grade(
+  p_token text, p_ini date, p_fim date, p_departamento uuid default null, p_colaborador uuid default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'escalas');
+  if p_ini is null or p_fim is null or p_fim < p_ini then
+    raise exception 'Informe um período válido.';
+  end if;
+  if p_fim - p_ini > 62 then
+    raise exception 'Selecione um período de até 2 meses.';
+  end if;
+
+  return jsonb_build_object(
+    'feriados', coalesce((select jsonb_agg(jsonb_build_object('data', f.data, 'descricao', f.descricao) order by f.data)
+                            from feriados f where f.data between p_ini and p_fim), '[]'::jsonb),
+    'fechado_ate', (select max(data_fim) from fechamentos),
+    'colaboradores', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', c.id, 'nome', c.nome, 'matricula', c.matricula, 'departamento', d.nome,
+               'jornada', (select j.nome from jornadas j where j.id = fn_jornada_vigente(c.id, p_fim)),
+               'inicio', fn_inicio_controle(c), 'desligamento', c.data_desligamento,
+               'dias', (
+                 select jsonb_agg(jsonb_build_object(
+                          'data', g::date,
+                          -- padrão da jornada no dia (sem a escala)
+                          'jornada_folga', coalesce(jd.folga, true),
+                          'entrada', to_char(jd.entrada, 'HH24:MI'),
+                          'saida_intervalo', to_char(jd.saida_intervalo, 'HH24:MI'),
+                          'retorno_intervalo', to_char(jd.retorno_intervalo, 'HH24:MI'),
+                          'saida', to_char(jd.saida, 'HH24:MI'),
+                          'escala', case when e.id is not null then jsonb_build_object(
+                                      'id', e.id, 'tipo', e.tipo,
+                                      'entrada', to_char(e.entrada, 'HH24:MI'),
+                                      'saida_intervalo', to_char(e.saida_intervalo, 'HH24:MI'),
+                                      'retorno_intervalo', to_char(e.retorno_intervalo, 'HH24:MI'),
+                                      'saida', to_char(e.saida, 'HH24:MI'),
+                                      'observacao', e.observacao, 'usuario', u.nome) end)
+                        order by g)
+                   from generate_series(p_ini, p_fim, interval '1 day') g
+                   left join jornadas j      on j.id = fn_jornada_vigente(c.id, g::date)
+                   left join jornada_dias jd on jd.jornada_id = j.id
+                                            and jd.dia_semana = fn_jornada_indice(j.tipo, j.ciclo_dias, j.data_base, g::date)
+                   left join escalas e       on e.colaborador_id = c.id and e.data = g::date
+                   left join usuarios u      on u.id = e.usuario_id))
+             order by c.nome)
+        from colaboradores c
+        left join departamentos d on d.id = c.departamento_id
+       where c.controla_ponto
+         and fn_visivel(c.id)
+         and (c.data_desligamento is null or c.data_desligamento >= p_ini)
+         and (p_departamento is null or c.departamento_id = p_departamento)
+         and (p_colaborador is null or c.id = p_colaborador)), '[]'::jsonb));
+end $$;
+
+-- Lança (ou substitui) a escala de vários colaboradores em vários dias.
+-- p_dados: { colaboradores: [uuid], datas: [date], tipo: 'trabalho'|'folga',
+--            entrada?, saida_intervalo?, retorno_intervalo?, saida?, observacao? }
+create or replace function api_escala_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_usuario uuid := fn_auth(p_token, 'escalas', true);
+  d         jsonb := p_dados;
+  v_tipo    text := fn_txt(d, 'tipo');
+  v_ent     time;
+  v_si      time;
+  v_ri      time;
+  v_sai     time;
+  v_colabs  uuid[];
+  v_datas   date[];
+  v_qtd     integer;
+begin
+  if v_tipo is null or v_tipo not in ('trabalho', 'folga') then
+    raise exception 'Escolha se o dia é de trabalho ou de folga.';
+  end if;
+  select array_agg(distinct x::uuid) into v_colabs
+    from jsonb_array_elements_text(case when jsonb_typeof(d -> 'colaboradores') = 'array' then d -> 'colaboradores' else '[]' end) x;
+  select array_agg(distinct x::date) into v_datas
+    from jsonb_array_elements_text(case when jsonb_typeof(d -> 'datas') = 'array' then d -> 'datas' else '[]' end) x;
+  if coalesce(array_length(v_colabs, 1), 0) = 0 then raise exception 'Selecione ao menos um colaborador.'; end if;
+  if coalesce(array_length(v_datas, 1), 0) = 0 then raise exception 'Selecione ao menos um dia.'; end if;
+  if array_length(v_datas, 1) > 366 then raise exception 'Selecione no máximo 366 dias.'; end if;
+  if exists (select 1 from unnest(v_colabs) x where not fn_visivel(x)) then
+    raise exception 'Há colaboradores fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+
+  if v_tipo = 'trabalho' then
+    v_ent := fn_txt(d, 'entrada')::time;
+    v_si  := fn_txt(d, 'saida_intervalo')::time;
+    v_ri  := fn_txt(d, 'retorno_intervalo')::time;
+    v_sai := fn_txt(d, 'saida')::time;
+    if v_ent is null or v_sai is null then
+      raise exception 'Informe a entrada e a saída da escala de trabalho.';
+    end if;
+    if (v_si is null) <> (v_ri is null) then
+      raise exception 'Informe a saída e o retorno do intervalo (ou deixe os dois em branco).';
+    end if;
+    if v_ent = v_sai then raise exception 'A entrada e a saída não podem ser iguais.'; end if;
+    -- marcações em sequência, podendo virar a meia-noite uma única vez
+    if v_si is not null and
+       (fn_minutos(v_ent, v_si) + fn_minutos(v_si, v_ri) + fn_minutos(v_ri, v_sai) <> fn_minutos(v_ent, v_sai)
+        or v_si = v_ent or v_ri = v_si or v_sai = v_ri) then
+      raise exception 'Os horários do intervalo precisam ficar entre a entrada e a saída.';
+    end if;
+  end if;
+
+  insert into escalas (colaborador_id, data, tipo, entrada, saida_intervalo, retorno_intervalo, saida, observacao, usuario_id)
+  select c, dt, v_tipo,
+         case when v_tipo = 'trabalho' then v_ent end, case when v_tipo = 'trabalho' then v_si end,
+         case when v_tipo = 'trabalho' then v_ri end,  case when v_tipo = 'trabalho' then v_sai end,
+         fn_txt(d, 'observacao'), v_usuario
+    from unnest(v_colabs) c cross join unnest(v_datas) dt
+  on conflict (colaborador_id, data) do update
+     set tipo = excluded.tipo, entrada = excluded.entrada, saida_intervalo = excluded.saida_intervalo,
+         retorno_intervalo = excluded.retorno_intervalo, saida = excluded.saida,
+         observacao = excluded.observacao, usuario_id = excluded.usuario_id;
+  get diagnostics v_qtd = row_count;
+  return jsonb_build_object('ok', true, 'qtd', v_qtd);
+exception
+  when invalid_datetime_format or datetime_field_overflow then raise exception 'Horário ou data inválida.';
+  when invalid_text_representation then raise exception 'Dados inválidos.';
+end $$;
+
+-- Remove a escala dos colaboradores nos dias informados: o dia volta ao padrão da jornada.
+-- p_dados: { colaboradores: [uuid], datas: [date] }
+create or replace function api_escala_excluir(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_qtd integer;
+begin
+  perform fn_auth(p_token, 'escalas', true);
+  delete from escalas e
+   where e.colaborador_id in (select x::uuid from jsonb_array_elements_text(
+                                case when jsonb_typeof(p_dados -> 'colaboradores') = 'array' then p_dados -> 'colaboradores' else '[]' end) x)
+     and e.data in (select x::date from jsonb_array_elements_text(
+                      case when jsonb_typeof(p_dados -> 'datas') = 'array' then p_dados -> 'datas' else '[]' end) x)
+     and fn_visivel(e.colaborador_id);
+  get diagnostics v_qtd = row_count;
+  return jsonb_build_object('ok', true, 'qtd', v_qtd);
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -525,7 +672,8 @@ begin
     'dias', coalesce((
       select jsonb_agg(jsonb_build_object(
                'data', a.data,
-               'previsto', fn_horario_texto(a.jornada_id, a.data),
+               'previsto', fn_horario_dia(a.colaborador_id, a.data),
+               'escala', a.escala,
                'previsto_min', a.previsto_min, 'trabalhado_min', a.trabalhado_min,
                'extra_min', a.extra_min, 'debito_min', a.debito_min, 'he_percentual', a.he_percentual::float8,
                'atraso_min', a.atraso_min, 'saida_antecipada_min', a.saida_antecipada_min,
@@ -535,7 +683,9 @@ begin
                   (select au.justificativa from ausencias au
                     where au.colaborador_id = a.colaborador_id and a.data between au.data_inicio and au.data_fim
                     order by au.minutos nulls first limit 1),
-                  (select f.descricao from feriados f where f.data = a.data)),
+                  (select es.observacao from escalas es
+                    where es.colaborador_id = a.colaborador_id and es.data = a.data),
+                  (select f.descricao from feriados f where f.data = a.data and a.feriado)),
                'batidas', coalesce((
                   select jsonb_agg(fn_batida_json(b, m.descricao) order by b.data_hora)
                     from fn_batidas_periodo(a.data, a.data, a.colaborador_id) b
@@ -768,7 +918,10 @@ grant execute on function api_feriado_excluir(text, uuid)                       
 grant execute on function api_ocorrencias_listar(text, date, date, uuid, uuid, text)   to anon, authenticated;
 grant execute on function api_ocorrencia_salvar(text, jsonb)                           to anon, authenticated;
 grant execute on function api_ocorrencia_excluir(text, uuid)                           to anon, authenticated;
-grant execute on function api_minhas_solicitacoes(text)                                to anon, authenticated;
+grant execute on function api_escalas_grade(text, date, date, uuid, uuid)              to anon, authenticated;
+grant execute on function api_escala_salvar(text, jsonb)                               to anon, authenticated;
+grant execute on function api_escala_excluir(text, jsonb)                              to anon, authenticated;
+grant execute on function api_minhas_solicitacoes(text)                              to anon, authenticated;
 grant execute on function api_solicitacao_criar(text, jsonb)                           to anon, authenticated;
 grant execute on function api_solicitacao_cancelar(text, uuid)                         to anon, authenticated;
 grant execute on function api_solicitacoes_listar(text, text)                          to anon, authenticated;

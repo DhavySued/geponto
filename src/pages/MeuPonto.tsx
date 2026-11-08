@@ -1,10 +1,9 @@
 import clsx from 'clsx';
-import { AlertTriangle, CheckCircle2, FileText, Fingerprint, Hourglass, Info, Timer, UserX } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Fingerprint, Hourglass, Info, Timer, UserX } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { MeuEspelho } from '@/components/meuponto/MeuEspelho';
 import { formatData, formatMinutos } from '@/lib/format';
 import { ocorrencia, ORIGEM_BATIDA, rotuloMarcacao } from '@/lib/ponto';
 import { useHoraOficial } from '@/lib/hooks';
@@ -32,7 +31,6 @@ export default function MeuPonto() {
   const [erro, setErro] = useState<string | null>(null);
   const [registrando, setRegistrando] = useState(false);
   const [comprovante, setComprovante] = useState<RegistroPonto | null>(null);
-  const [verEspelho, setVerEspelho] = useState(false);
   const { agora, fuso } = useHoraOficial();
 
   const carregar = useCallback(async () => {
@@ -74,8 +72,6 @@ export default function MeuPonto() {
       </div>
     );
   }
-
-  if (verEspelho) return <MeuEspelho onVoltar={() => setVerEspelho(false)} />;
 
   const hoje = dados?.hoje;
   // Só uma previsão para orientar o colaborador; a classificação final é do servidor/RH
@@ -209,14 +205,9 @@ export default function MeuPonto() {
       </div>
 
       <section className="card">
-        <header className="flex flex-wrap items-center justify-between gap-3 px-5 pb-3 pt-5">
-          <div>
-            <h2 className="text-[15px] font-semibold text-slate-900">Últimos dias</h2>
-            <p className="mt-0.5 text-xs text-slate-500">Cada dia encerrado entra automaticamente no seu banco de horas.</p>
-          </div>
-          <Button variant="secondary" className="h-9" onClick={() => setVerEspelho(true)}>
-            <FileText className="h-4 w-4" /> Meu espelho de ponto
-          </Button>
+        <header className="px-5 pb-3 pt-5">
+          <h2 className="text-[15px] font-semibold text-slate-900">Últimos dias</h2>
+          <p className="mt-0.5 text-xs text-slate-500">Cada dia encerrado entra automaticamente no seu banco de horas.</p>
         </header>
         {!dados || dados.ultimos_dias.length === 0 ? (
           <p className="px-5 pb-8 pt-4 text-center text-sm text-slate-400">Ainda não há dias encerrados.</p>

@@ -29,7 +29,7 @@ function PerfilCard({ p, onAbrir }: { p: PerfilEvento; onAbrir: () => void }) {
       </div>
 
       <p className="mt-4 text-[11px] font-medium uppercase tracking-wide text-slate-400">Hora extra</p>
-      <div className="mt-1.5 grid grid-cols-8 gap-1">
+      <div className="mt-1.5 grid grid-cols-9 gap-1">
         {DIAS_HE.map((d) => (
           <span
             key={d.dia}
@@ -47,7 +47,9 @@ function PerfilCard({ p, onAbrir }: { p: PerfilEvento; onAbrir: () => void }) {
 
       <ul className="mt-4 space-y-1 text-xs text-slate-500">
         <li>
-          Tolerância: entrada {p.tolerancia_entrada_min} min · saída {p.tolerancia_saida_min} min · geral {p.tolerancia_diaria_min} min
+          {p.tolerancia_modo === 'diaria'
+            ? `Tolerância geral do dia: ${p.tolerancia_diaria_min} min`
+            : `Tolerância por batida: entrada ${p.tolerancia_entrada_min} min · saída ${p.tolerancia_saida_min} min`}
         </li>
         <li>
           {p.usa_banco_horas ? 'Banco de horas' : 'Sem banco de horas (extras e faltas na folha)'}
@@ -98,7 +100,7 @@ export default function PerfisEventos() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Perfis de eventos</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Regras de cálculo do ponto de cada colaborador: tolerâncias, percentual de hora extra por dia, adicional noturno e banco de horas.
+            Regras de cálculo do ponto de cada colaborador: tolerâncias, percentual de hora extra por dia (com feriado e folga), adicional noturno e banco de horas.
           </p>
         </div>
         {podeEditar && (

@@ -210,9 +210,12 @@ begin
     -- Jornada de cada colaborador em cada dia do período
     dia as (
       select c.id as colaborador_id, g::date as data, jd.*, j.nome as jornada,
-             pe.tolerancia_entrada_min as tol_e, pe.tolerancia_saida_min as tol_s,
-             (f.id is not null) as feriado, a.tipo as ausencia,
-             case when jd.folga then null else fn_horario_texto(jd.jornada_id, g::date) end as horario_previsto,
+             -- tolerância por batida, ou a geral do dia quando o perfil usa só ela
+             case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else pe.tolerancia_entrada_min end as tol_e,
+             case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else pe.tolerancia_saida_min end as tol_s,
+             -- escala de trabalho no feriado: para o colaborador o dia é normal
+             (f.id is not null and jd.escala is distinct from 'trabalho') as feriado, a.tipo as ausencia,
+             fn_horario_dia(c.id, g::date) as horario_previsto,
              -- Observação do dia: ausência registrada (férias, afastamento…) ou feriado
              case a.tipo
                when 'ferias'            then 'Empregado de férias'
@@ -221,7 +224,7 @@ begin
                when 'falta_justificada' then 'Falta justificada'
                when 'folga'             then 'Folga concedida'
                when 'abono'             then 'Dia abonado'
-               else case when f.id is not null then 'Feriado: ' || f.descricao end
+               else case when f.id is not null and jd.escala is distinct from 'trabalho' then 'Feriado: ' || f.descricao end
              end as obs_dia
         from colab c
        cross join generate_series(greatest(p_ini, c.data_admissao, coalesce(c.controle_ponto_inicio, c.data_admissao)),

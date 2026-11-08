@@ -83,7 +83,10 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
                     <span className="inline-block w-8 capitalize text-slate-400">{formatData(d.data, { weekday: 'short' }).replace('.', '')}</span>
                     {formatData(d.data)}
                   </td>
-                  <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-500">{d.previsto ?? 'Folga'}</td>
+                  <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-500">
+                    {d.previsto ?? 'Folga'}
+                    {d.escala && <sup className="ml-px text-emerald-700" title="Escala lançada no dia">E</sup>}
+                  </td>
                   <td className="py-1.5 pr-2 tabular-nums">
                     <span className="flex flex-wrap gap-x-2">
                       {d.batidas.length === 0 && <span className="text-slate-300">—</span>}
@@ -153,7 +156,8 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
 
       <p className="mt-4 text-[10px] text-slate-400">
         Marcações: preto = original do registro · <span className="text-blue-700">azul ᴵ = incluída no tratamento</span> ·{' '}
-        <span className="text-rose-600 line-through">vermelho ᴰ</span> = desconsiderada (mantida no registro) · BH = vai para o banco de horas.
+        <span className="text-rose-600 line-through">vermelho ᴰ</span> = desconsiderada (mantida no registro) · BH = vai para o banco de horas ·{' '}
+        <span className="text-emerald-700">E</span> = escala do dia (fora do padrão da jornada).
       </p>
 
       <footer className="mt-10 grid grid-cols-2 gap-10 text-center text-[11px] text-slate-500">

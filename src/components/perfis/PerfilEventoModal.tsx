@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { DIAS_HE, novoPerfilEvento } from '@/lib/perfilEvento';
+import { completarPerfil, DIAS_HE, novoPerfilEvento } from '@/lib/perfilEvento';
 import { api } from '@/lib/supabase';
 import type { PerfilEvento } from '@/lib/types';
 
@@ -30,7 +30,7 @@ export function PerfilEventoModal({
 
   useEffect(() => {
     if (!aberto) return;
-    setForm(perfil ? structuredClone(perfil) : novoPerfilEvento());
+    setForm(perfil ? completarPerfil(structuredClone(perfil)) : novoPerfilEvento());
     setErro(null);
     setConfirmarExclusao(false);
   }, [aberto, perfil]);
@@ -141,15 +141,16 @@ export function PerfilEventoModal({
             <div>
               <h3 className="text-sm font-semibold text-slate-800">Percentual de hora extra por dia</h3>
               <p className="text-xs text-slate-500">
-                Vale para as horas trabalhadas além do previsto no dia. No feriado vale o percentual de "Feriado", em qualquer dia
-                da semana. Cada percentual vira um evento na exportação para a folha.
+                Vale para as horas trabalhadas além do previsto no dia. No feriado vale o percentual de "Feriado" e, no dia de
+                folga da jornada ou da escala, o de "Folga" — em qualquer dia da semana. Cada percentual vira um evento na
+                exportação para a folha.
               </p>
             </div>
             <Button variant="ghost" className="h-8 shrink-0 text-xs" onClick={replicarSegunda}>
               <CopyCheck className="h-3.5 w-3.5" /> Copiar segunda até sábado
             </Button>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-9">
             {DIAS_HE.map((d) => (
               <Field key={d.dia} label={d.nome}>
                 <div className="relative">
@@ -158,7 +159,7 @@ export function PerfilEventoModal({
                     min={0}
                     max={999}
                     step="0.5"
-                    className={clsx('input pr-7 tabular-nums', d.dia === 7 && 'bg-accent-50/60')}
+                    className={clsx('input pr-7 tabular-nums', d.dia >= 7 && 'bg-accent-50/60')}
                     value={percentual(d.dia)}
                     onChange={(e) => setPercentual(d.dia, numero(e.target.value))}
                   />
@@ -172,25 +173,54 @@ export function PerfilEventoModal({
         <section className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-xl p-4 ring-1 ring-slate-200/80">
             <h3 className="text-sm font-semibold text-slate-800">Tolerâncias</h3>
-            <p className="mb-4 text-xs text-slate-500">Atrasos e variações dentro desses limites não são descontados.</p>
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Entrada (min)">
-                <input type="number" min={0} className="input" value={form.tolerancia_entrada_min}
-                  onChange={(e) => set('tolerancia_entrada_min', numero(e.target.value))} />
-              </Field>
-              <Field label="Saída (min)">
-                <input type="number" min={0} className="input" value={form.tolerancia_saida_min}
-                  onChange={(e) => set('tolerancia_saida_min', numero(e.target.value))} />
-              </Field>
-              <Field label="Geral do dia (min)">
-                <input type="number" min={0} className="input" value={form.tolerancia_diaria_min}
-                  onChange={(e) => set('tolerancia_diaria_min', numero(e.target.value))} />
-              </Field>
+            <p className="mb-3 text-xs text-slate-500">Atrasos e variações dentro do limite não são descontados. Use um dos dois modos.</p>
+            <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+              {([
+                ['batida', 'Por batida'],
+                ['diaria', 'Geral do dia'],
+              ] as const).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => set('tolerancia_modo', k)}
+                  className={clsx(
+                    'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                    form.tolerancia_modo === k ? 'bg-white text-primary-800 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-800',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
-              Geral do dia: se a diferença entre o trabalhado e o previsto ficar dentro dela, o dia fecha sem extra e sem débito.
-              CLT art. 58 §1º: até 5 min por marcação e 10 min por dia.
-            </p>
+            {form.tolerancia_modo === 'batida' ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Entrada (min)">
+                    <input type="number" min={0} className="input" value={form.tolerancia_entrada_min}
+                      onChange={(e) => set('tolerancia_entrada_min', numero(e.target.value))} />
+                  </Field>
+                  <Field label="Saída (min)">
+                    <input type="number" min={0} className="input" value={form.tolerancia_saida_min}
+                      onChange={(e) => set('tolerancia_saida_min', numero(e.target.value))} />
+                  </Field>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  Cada marcação dentro da tolerância conta como o horário previsto (entrada, intervalo, retorno e saída). Fora
+                  dela, conta a diferença inteira. CLT art. 58 §1º: até 5 min por marcação.
+                </p>
+              </>
+            ) : (
+              <>
+                <Field label="Geral do dia (min)">
+                  <input type="number" min={0} className="input w-40" value={form.tolerancia_diaria_min}
+                    onChange={(e) => set('tolerancia_diaria_min', numero(e.target.value))} />
+                </Field>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  Se a diferença entre o trabalhado e o previsto no dia ficar dentro dela, o dia fecha sem extra e sem débito.
+                  CLT art. 58 §1º: até 10 min por dia.
+                </p>
+              </>
+            )}
           </div>
 
           <div className="rounded-xl p-4 ring-1 ring-slate-200/80">

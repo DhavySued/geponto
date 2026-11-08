@@ -315,6 +315,7 @@ begin
     return jsonb_build_object('vinculado', false);
   end if;
   if v_ini > v_fim then v_ini := v_fim; end if;
+  if v_fim - v_ini > 92 then raise exception 'Selecione um período de até 3 meses.'; end if;
   perform fn_banco_horas_atualizar();
 
   drop table if exists pg_temp._meu;
@@ -329,7 +330,7 @@ begin
       'cargo', (select nome from cargos where id = c.cargo_id),
       'departamento', (select nome from departamentos where id = c.departamento_id),
       'jornada', (select nome from jornadas where id = fn_jornada_vigente(c.id, v_hoje)),
-      'horario_hoje', fn_horario_texto(fn_jornada_vigente(c.id, v_hoje), v_hoje)),
+      'horario_hoje', fn_horario_dia(c.id, v_hoje)),
     'resumo', (
       select jsonb_build_object(
         'dias_previstos',   count(*) filter (where previsto_min > 0 and data < v_hoje),

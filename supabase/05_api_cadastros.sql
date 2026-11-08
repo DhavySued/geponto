@@ -478,7 +478,7 @@ begin
 end $$;
 
 -- -----------------------------------------------------------------------------
--- Perfis de eventos: tolerâncias, percentual de HE por dia (domingo … sábado e feriado),
+-- Perfis de eventos: tolerâncias, percentual de HE por dia (domingo … sábado, feriado e folga),
 -- limite de HE, adicional noturno e banco de horas. Vinculados ao colaborador.
 -- -----------------------------------------------------------------------------
 create or replace function api_perfis_eventos_listar(p_token text)
@@ -516,8 +516,11 @@ begin
   if fn_txt(d, 'nome') is null then raise exception 'Informe o nome do perfil.'; end if;
   if jsonb_typeof(d -> 'he') <> 'array'
      or (select count(distinct (x ->> 'dia')::int) from jsonb_array_elements(d -> 'he') x
-          where (x ->> 'dia')::int between 0 and 7 and fn_txt(x, 'percentual') is not null) <> 8 then
-    raise exception 'Informe o percentual de hora extra de todos os dias da semana e do feriado.';
+          where (x ->> 'dia')::int between 0 and 8 and fn_txt(x, 'percentual') is not null) <> 9 then
+    raise exception 'Informe o percentual de hora extra de todos os dias da semana, do feriado e da folga.';
+  end if;
+  if coalesce(fn_txt(d, 'tolerancia_modo'), 'batida') not in ('batida', 'diaria') then
+    raise exception 'Escolha a tolerância por batida ou a geral do dia.';
   end if;
   if exists (select 1 from jsonb_array_elements(d -> 'he') x
               where (x ->> 'percentual')::numeric not between 0 and 999) then
@@ -550,6 +553,7 @@ begin
     tolerancia_entrada_min = coalesce(fn_txt(d, 'tolerancia_entrada_min')::smallint, 5),
     tolerancia_saida_min   = coalesce(fn_txt(d, 'tolerancia_saida_min')::smallint, 5),
     tolerancia_diaria_min  = coalesce(fn_txt(d, 'tolerancia_diaria_min')::smallint, 10),
+    tolerancia_modo        = coalesce(fn_txt(d, 'tolerancia_modo'), 'batida'),
     limite_he_diario_min   = coalesce(fn_txt(d, 'limite_he_diario_min')::smallint, 120),
     usa_banco_horas        = coalesce((d ->> 'usa_banco_horas')::boolean, true),
     noturno_inicio         = coalesce(fn_txt(d, 'noturno_inicio')::time, '22:00'),
@@ -561,6 +565,7 @@ begin
   insert into perfil_evento_he (perfil_id, dia, percentual)
   select v_id, (x ->> 'dia')::smallint, (x ->> 'percentual')::numeric
     from jsonb_array_elements(d -> 'he') x
+   where (x ->> 'dia')::int between 0 and 8
   on conflict (perfil_id, dia) do update set percentual = excluded.percentual;
 
   perform fn_eventos_he_sincronizar();
