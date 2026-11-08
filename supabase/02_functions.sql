@@ -748,6 +748,14 @@ $$;
 -- Cada dia encerrado gera um lançamento 'automatico' com o saldo apurado.
 -- Idempotente: substitui os lançamentos automáticos do período (e do colaborador).
 -- -----------------------------------------------------------------------------
+-- Distância em metros entre dois pontos (fórmula de haversine)
+create or replace function fn_distancia_m(p_lat1 numeric, p_lng1 numeric, p_lat2 numeric, p_lng2 numeric)
+returns integer language sql immutable as $$
+  select round(2 * 6371000 * asin(sqrt(
+           power(sin(radians(p_lat2 - p_lat1) / 2), 2)
+           + cos(radians(p_lat1)) * cos(radians(p_lat2)) * power(sin(radians(p_lng2 - p_lng1) / 2), 2))))::int;
+$$;
+
 drop function if exists fn_processar_banco_horas(date, date);
 create or replace function fn_processar_banco_horas(p_ini date, p_fim date, p_colaborador uuid default null)
 returns integer language plpgsql volatile set search_path = public as $$

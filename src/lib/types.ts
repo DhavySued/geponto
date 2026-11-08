@@ -13,6 +13,7 @@ export type PaginaChave =
   | 'lancamento_manual'
   | 'espelho_ponto'
   | 'feriados'
+  | 'locais_ponto'
   | 'ocorrencias'
   | 'solicitacoes'
   | 'fechamento'
@@ -272,7 +273,22 @@ export interface HePercentual {
 // ---------------------------------------------------------------------------
 // Ponto e banco de horas
 // ---------------------------------------------------------------------------
-export interface BatidaResumo {
+/** Situação da localização da batida: no raio de um local, fora dele, sem local cadastrado ou sem localização */
+export type GeoStatus = 'dentro' | 'fora' | 'registrada' | 'sem_localizacao';
+
+/** Geolocalização registrada com a batida (só batidas feitas pelo sistema/quiosque têm) */
+export interface GeoBatida {
+  geo_status?: GeoStatus | null;
+  geo_erro?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  precisao_m?: number | null;
+  distancia_m?: number | null;
+  /** Local de ponto mais próximo */
+  local?: string | null;
+}
+
+export interface BatidaResumo extends GeoBatida {
   id: string;
   hora: string;
   origem: string;
@@ -280,6 +296,21 @@ export interface BatidaResumo {
   /** Classificação efetiva: declarada pelo RH ou pela sequência do dia */
   sentido: Sentido;
   turno: number;
+}
+
+/** Local onde o colaborador deve bater o ponto (um só; centro capturado pelo aparelho + raio) */
+export interface LocalPonto {
+  id?: string;
+  nome: string;
+  endereco: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  raio_m: number;
+  /** Precisão do GPS quando as coordenadas foram capturadas */
+  precisao_m: number | null;
+  ativo: boolean;
+  batidas_30d?: number;
+  fora_30d?: number;
 }
 
 export interface MeuPontoData {
@@ -323,7 +354,7 @@ export interface MeuPontoData {
   }[];
 }
 
-export interface RegistroPonto {
+export interface RegistroPonto extends GeoBatida {
   ok: boolean;
   data: string;
   hora: string;
@@ -455,7 +486,7 @@ export interface LancamentoBH {
 export type StatusBatida = 'original' | 'incluida' | 'desconsiderada';
 export type Sentido = 'E' | 'S';
 
-export interface BatidaTratamento {
+export interface BatidaTratamento extends GeoBatida {
   id: string;
   colaborador_id: string;
   data_hora: string;
@@ -804,7 +835,14 @@ export interface TotaisPeriodo {
   colaboradores: TotaisColaborador[];
 }
 
-export type RegraQuebrada = 'interjornada' | 'intrajornada' | 'jornada_maxima' | 'limite_he' | 'marcacao_impar';
+export type RegraQuebrada =
+  | 'interjornada'
+  | 'intrajornada'
+  | 'jornada_maxima'
+  | 'limite_he'
+  | 'marcacao_impar'
+  | 'fora_local'
+  | 'sem_localizacao';
 
 export interface QuebraRegra {
   colaborador_id: string;

@@ -16,6 +16,8 @@ const REGRAS: Record<RegraQuebrada, { label: string; tone: BadgeTone; medida: st
   jornada_maxima: { label: 'Jornada acima de 10h', tone: 'red', medida: 'Trabalhado' },
   limite_he: { label: 'Extra acima do limite', tone: 'violet', medida: 'Extra' },
   marcacao_impar: { label: 'Marcação ímpar', tone: 'slate', medida: '' },
+  fora_local: { label: 'Batida fora do local', tone: 'orange', medida: '' },
+  sem_localizacao: { label: 'Batida sem localização', tone: 'slate', medida: '' },
 };
 
 export default function QuebraRegras() {

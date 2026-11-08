@@ -2,9 +2,11 @@ import clsx from 'clsx';
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Fingerprint, LogIn, Lock, User } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { AvisoGeo } from '@/components/ponto/Geo';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData } from '@/lib/format';
+import { obterLocalizacao } from '@/lib/geo';
 import { useHoraOficial } from '@/lib/hooks';
 import { supabase } from '@/lib/supabase';
 import type { RegistroPonto } from '@/lib/types';
@@ -53,10 +55,13 @@ export default function Login() {
   };
 
   const registrarPonto = async () => {
+    // A localização acompanha a batida; sem ela o ponto é registrado mesmo assim (Portaria 671)
+    const geo = await obterLocalizacao();
     const { data, error } = await supabase.rpc('api_registrar_ponto_rapido', {
       p_login: login,
       p_senha: senha,
       p_user_agent: navigator.userAgent,
+      ...geo,
     });
     if (error) return setErro('Não foi possível conectar ao servidor. Tente novamente.');
     const r = data as RegistroPonto & { erro?: string };
@@ -187,6 +192,7 @@ export default function Login() {
                 </div>
               </div>
             )}
+            {comprovante && <AvisoGeo g={comprovante} />}
             {erro && (
               <div className="flex items-start gap-2 rounded-xl bg-rose-50 p-3 text-sm text-rose-700 ring-1 ring-rose-200">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />

@@ -356,6 +356,39 @@ create table if not exists batidas (
 create index if not exists ix_batidas_colab_dia on batidas (colaborador_id, data_referencia, data_hora);
 create index if not exists ix_batidas_dia on batidas (data_referencia);
 
+-- -----------------------------------------------------------------------------
+-- Geolocalização da batida (registro pelo sistema / quiosque)
+-- Local onde o colaborador deve bater o ponto (um só): centro + raio. As coordenadas são sempre
+-- capturadas pelo aparelho de quem cadastra, estando no local. A batida fora do raio, ou sem
+-- localização, é registrada normalmente (Portaria 671: o registro não pode ser impedido) e fica
+-- marcada para o RH conferir.
+-- -----------------------------------------------------------------------------
+create table if not exists locais_ponto (
+  id          uuid primary key default gen_random_uuid(),
+  nome        text not null unique,
+  endereco    text,
+  latitude    numeric(9,6) not null check (latitude between -90 and 90),
+  longitude   numeric(9,6) not null check (longitude between -180 and 180),
+  raio_m      integer not null default 150 check (raio_m between 10 and 50000),
+  precisao_m  integer,                    -- precisão do GPS na captura das coordenadas
+  ativo       boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- geo_status: 'dentro' / 'fora' do local mais próximo · 'registrada' (com localização, sem local
+-- cadastrado) · 'sem_localizacao' (navegador não informou) · null = não se aplica (relógio, manual…)
+alter table locais_ponto add column if not exists precisao_m integer;
+
+alter table batidas add column if not exists precisao_m  integer;
+alter table batidas add column if not exists geo_status  text;
+alter table batidas add column if not exists geo_erro    text;
+alter table batidas add column if not exists local_id    uuid references locais_ponto(id) on delete set null;
+alter table batidas add column if not exists distancia_m integer;
+alter table batidas drop constraint if exists batidas_geo_status_check;
+alter table batidas add constraint batidas_geo_status_check
+  check (geo_status in ('dentro', 'fora', 'registrada', 'sem_localizacao'));
+
 -- Auditoria de ajustes manuais (inclusão / alteração / desconsideração)
 create table if not exists batida_ajustes (
   id               uuid primary key default gen_random_uuid(),
@@ -488,7 +521,12 @@ begin
   end if;
   if old.origem <> 'manual' and (new.data_hora is distinct from old.data_hora
                                  or new.colaborador_id is distinct from old.colaborador_id
-                                 or new.nsr is distinct from old.nsr) then
+                                 or new.nsr is distinct from old.nsr
+                                 -- a localização registrada com a batida também não muda
+                                 or new.latitude is distinct from old.latitude
+                                 or new.longitude is distinct from old.longitude
+                                 or new.precisao_m is distinct from old.precisao_m
+                                 or new.geo_status is distinct from old.geo_status) then
     raise exception 'Batidas originais não podem ser editadas. É possível apenas desconsiderar, declarar o sentido ou alterar a data de referência.';
   end if;
   return new;
@@ -732,6 +770,10 @@ drop trigger if exists trg_escalas_updated on escalas;
 create trigger trg_escalas_updated before update on escalas
   for each row execute function fn_set_updated_at();
 
+drop trigger if exists trg_locais_ponto_updated on locais_ponto;
+create trigger trg_locais_ponto_updated before update on locais_ponto
+  for each row execute function fn_set_updated_at();
+
 drop trigger if exists trg_perfis_eventos_updated on perfis_eventos;
 create trigger trg_perfis_eventos_updated before update on perfis_eventos
   for each row execute function fn_set_updated_at();
@@ -860,6 +902,7 @@ alter table cargos                enable row level security;
 alter table jornadas              enable row level security;
 alter table jornada_dias          enable row level security;
 alter table feriados              enable row level security;
+alter table locais_ponto          enable row level security;
 alter table colaboradores         enable row level security;
 alter table colaborador_historico enable row level security;
 alter table colaborador_jornadas  enable row level security;

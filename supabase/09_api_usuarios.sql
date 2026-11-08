@@ -371,7 +371,11 @@ end $$;
 -- Registro rápido de ponto (tela de login / quiosque): confere login e senha e
 -- registra a batida do próprio colaborador, sem abrir sessão no sistema.
 -- -----------------------------------------------------------------------------
-create or replace function api_registrar_ponto_rapido(p_login text, p_senha text, p_user_agent text default null)
+drop function if exists api_registrar_ponto_rapido(text, text, text);
+create or replace function api_registrar_ponto_rapido(
+  p_login text, p_senha text, p_user_agent text default null,
+  p_latitude numeric default null, p_longitude numeric default null,
+  p_precisao numeric default null, p_geo_erro text default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_cred    jsonb;
@@ -392,7 +396,8 @@ begin
 
   perform set_config('app.usuario_id', v_usuario::text, true);   -- auditoria
   begin
-    return fn_registrar_batida(v_usuario) || jsonb_build_object('ok', true);
+    return fn_registrar_batida(v_usuario, 'web', p_latitude, p_longitude, p_precisao, p_geo_erro)
+           || jsonb_build_object('ok', true);
   exception when raise_exception then
     return jsonb_build_object('ok', false, 'erro', sqlerrm);
   end;
@@ -414,7 +419,7 @@ grant execute on function api_acessos_gerar(text, uuid[], text, uuid, text) to a
 grant execute on function api_perfil_salvar(text, jsonb)                to anon, authenticated;
 grant execute on function api_perfil_excluir(text, uuid)                to anon, authenticated;
 grant execute on function api_meu_dashboard(text, date, date)           to anon, authenticated;
-grant execute on function api_registrar_ponto_rapido(text, text, text)  to anon, authenticated;
+grant execute on function api_registrar_ponto_rapido(text, text, text, numeric, numeric, numeric, text) to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST)
 notify pgrst, 'reload schema';

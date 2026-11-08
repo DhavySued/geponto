@@ -25,6 +25,23 @@ returns text language sql immutable as $$
   select case when p_sentido = 'S' then 'Saída' else 'Entrada' end || ' do ' || coalesce(p_turno, 1) || 'º turno';
 $$;
 
+-- Geolocalização de uma batida, como JSON (vazio quando a batida não tem)
+create or replace function fn_batida_geo_json(p_batida uuid)
+returns jsonb language sql stable set search_path = public as $$
+  select coalesce((
+    select jsonb_build_object(
+             'geo_status', b.geo_status,
+             'geo_erro', b.geo_erro,
+             'latitude', b.latitude::float8,
+             'longitude', b.longitude::float8,
+             'precisao_m', b.precisao_m,
+             'distancia_m', b.distancia_m,
+             'local', l.nome)
+      from batidas b
+      left join locais_ponto l on l.id = b.local_id
+     where b.id = p_batida and b.geo_status is not null), '{}'::jsonb);
+$$;
+
 -- Batidas válidas de um colaborador em um dia, como JSON (com a classificação de cada uma)
 create or replace function fn_batidas_json(p_colaborador uuid, p_data date)
 returns jsonb language sql stable set search_path = public as $$
@@ -34,7 +51,7 @@ returns jsonb language sql stable set search_path = public as $$
            'origem', b.origem,
            'nsr', b.nsr,
            'sentido', b.sentido,
-           'turno', b.turno) order by b.data_hora), '[]'::jsonb)
+           'turno', b.turno) || fn_batida_geo_json(b.id) order by b.data_hora), '[]'::jsonb)
     from fn_batidas_periodo(p_data, p_data, p_colaborador) b
    where b.status = 'valida';
 $$;
@@ -120,7 +137,13 @@ end $$;
 
 -- Registra a batida do colaborador vinculado ao usuário, com o horário do servidor
 -- (nunca do navegador). Ninguém registra ponto em nome de outro por aqui.
-create or replace function fn_registrar_batida(p_usuario uuid, p_origem origem_batida default 'web')
+-- A localização é guardada com a batida e comparada com o local de ponto mais próximo.
+-- Sem localização ou fora do raio a batida é registrada mesmo assim (Portaria 671), só fica marcada.
+drop function if exists fn_registrar_batida(uuid, origem_batida);
+create or replace function fn_registrar_batida(
+  p_usuario uuid, p_origem origem_batida default 'web',
+  p_latitude numeric default null, p_longitude numeric default null,
+  p_precisao numeric default null, p_geo_erro text default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_usuario uuid := p_usuario;
@@ -129,6 +152,14 @@ declare
   v_bat     batidas%rowtype;
   v_seq     integer;
   v_tipo    text;
+  v_lat     numeric := case when p_latitude between -90 and 90 and p_longitude between -180 and 180
+                            then round(p_latitude, 6) end;
+  v_lng     numeric := case when p_latitude between -90 and 90 and p_longitude between -180 and 180
+                            then round(p_longitude, 6) end;
+  v_local   uuid;
+  v_raio    integer;
+  v_dist    integer;
+  v_status  text;
 begin
   select col.* into c
     from colaboradores col join usuarios u on u.colaborador_id = col.id
@@ -149,8 +180,26 @@ begin
     raise exception 'Você já registrou o ponto há menos de 1 minuto.';
   end if;
 
-  insert into batidas (colaborador_id, data_hora, origem, nsr, usuario_id)
-  values (c.id, now(), p_origem, nextval('seq_nsr'), v_usuario)
+  if v_lat is null then
+    v_status := 'sem_localizacao';
+  else
+    select l.id, l.raio_m, fn_distancia_m(v_lat, v_lng, l.latitude, l.longitude)
+      into v_local, v_raio, v_dist
+      from locais_ponto l
+     where l.ativo
+     order by 3
+     limit 1;
+    v_status := case when v_local is null then 'registrada'
+                     when v_dist <= v_raio then 'dentro'
+                     else 'fora' end;
+  end if;
+
+  insert into batidas (colaborador_id, data_hora, origem, nsr, usuario_id,
+                       latitude, longitude, precisao_m, geo_status, geo_erro, local_id, distancia_m)
+  values (c.id, now(), p_origem, nextval('seq_nsr'), v_usuario,
+          v_lat, v_lng, case when v_lat is not null then least(round(p_precisao), 1000000)::int end, v_status,
+          case when v_lat is null then left(coalesce(nullif(trim(p_geo_erro), ''), 'Localização não informada'), 200) end,
+          v_local, v_dist)
   returning * into v_bat;
 
   select count(*) into v_seq
@@ -168,13 +217,90 @@ begin
     'sequencia', v_seq,
     'tipo', v_tipo,
     'colaborador', c.nome,
-    'matricula', c.matricula);
+    'matricula', c.matricula) || fn_batida_geo_json(v_bat.id);
 end $$;
 
-create or replace function api_registrar_ponto(p_token text)
+drop function if exists api_registrar_ponto(text);
+create or replace function api_registrar_ponto(
+  p_token text, p_latitude numeric default null, p_longitude numeric default null,
+  p_precisao numeric default null, p_geo_erro text default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
-  return fn_registrar_batida(fn_auth(p_token, 'meu_ponto', true));
+  return fn_registrar_batida(fn_auth(p_token, 'meu_ponto', true), 'web',
+                             p_latitude, p_longitude, p_precisao, p_geo_erro);
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Local de ponto (cerca virtual): um só, com coordenadas capturadas pelo aparelho
+-- -----------------------------------------------------------------------------
+create or replace function api_locais_ponto_listar(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'locais_ponto');
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id', l.id, 'nome', l.nome, 'endereco', l.endereco,
+             'latitude', l.latitude::float8, 'longitude', l.longitude::float8,
+             'raio_m', l.raio_m, 'precisao_m', l.precisao_m, 'ativo', l.ativo,
+             'batidas_30d', (select count(*) from batidas b
+                              where b.local_id = l.id and b.data_referencia >= fn_hoje() - 30),
+             'fora_30d', (select count(*) from batidas b
+                           where b.local_id = l.id and b.geo_status = 'fora' and b.data_referencia >= fn_hoje() - 30))
+           order by l.ativo desc, l.nome)
+      from locais_ponto l), '[]'::jsonb);
+end $$;
+
+create or replace function api_local_ponto_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d    jsonb := p_dados;
+  v_id uuid := nullif(d ->> 'id', '')::uuid;
+begin
+  perform fn_auth(p_token, 'locais_ponto', true);
+  if fn_txt(d, 'nome') is null then raise exception 'Informe o nome do local.'; end if;
+  if fn_txt(d, 'latitude') is null or fn_txt(d, 'longitude') is null then
+    raise exception 'Capture a localização do local estando nele (botão “Capturar localização”).';
+  end if;
+
+  if v_id is null then
+    if exists (select 1 from locais_ponto) then
+      raise exception 'Já existe um local de ponto cadastrado. Edite o local existente.';
+    end if;
+    insert into locais_ponto (nome, endereco, latitude, longitude, raio_m, precisao_m, ativo)
+    values (fn_txt(d, 'nome'), fn_txt(d, 'endereco'), fn_txt(d, 'latitude')::numeric, fn_txt(d, 'longitude')::numeric,
+            coalesce(fn_txt(d, 'raio_m')::int, 150), round(fn_txt(d, 'precisao_m')::numeric)::int,
+            coalesce((d ->> 'ativo')::boolean, true))
+    returning id into v_id;
+  else
+    update locais_ponto set
+      nome = fn_txt(d, 'nome'), endereco = fn_txt(d, 'endereco'),
+      latitude = fn_txt(d, 'latitude')::numeric, longitude = fn_txt(d, 'longitude')::numeric,
+      raio_m = coalesce(fn_txt(d, 'raio_m')::int, 150), precisao_m = round(fn_txt(d, 'precisao_m')::numeric)::int,
+      ativo = coalesce((d ->> 'ativo')::boolean, true)
+     where id = v_id;
+    if not found then raise exception 'Local não encontrado.'; end if;
+  end if;
+  -- Batidas já registradas mantêm a situação calculada no momento da marcação
+  return jsonb_build_object('id', v_id);
+exception
+  when unique_violation then
+    raise exception 'Já existe um local com este nome.';
+  when check_violation then
+    raise exception 'Confira os valores: latitude entre -90 e 90, longitude entre -180 e 180 e raio entre 10 m e 50 km.';
+  when invalid_text_representation or numeric_value_out_of_range then
+    raise exception 'Localização inválida. Capture a localização novamente.';
+end $$;
+
+create or replace function api_local_ponto_excluir(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'locais_ponto', true);
+  if exists (select 1 from batidas where local_id = p_id) then
+    raise exception 'Este local já tem batidas registradas. Desative-o em vez de excluir.';
+  end if;
+  delete from locais_ponto where id = p_id;
+  if not found then raise exception 'Local não encontrado.'; end if;
+  return jsonb_build_object('ok', true);
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -639,6 +765,8 @@ end $$;
 -- -----------------------------------------------------------------------------
 revoke execute on function fn_motivo_bloqueio_ponto(colaboradores)      from public, anon, authenticated;
 revoke execute on function fn_batidas_json(uuid, date)                  from public, anon, authenticated;
+revoke execute on function fn_batida_geo_json(uuid)                     from public, anon, authenticated;
+revoke execute on function fn_distancia_m(numeric, numeric, numeric, numeric) from public, anon, authenticated;
 revoke execute on function fn_batidas_periodo(date, date, uuid)         from public, anon, authenticated;
 revoke execute on function fn_rotulo_batida(text, integer)              from public, anon, authenticated;
 
@@ -656,8 +784,11 @@ revoke execute on function fn_processar_banco_horas(date, date, uuid)   from pub
 revoke execute on function fn_banco_horas_atualizar()                   from public, anon, authenticated;
 
 grant execute on function api_meu_ponto(text)                           to anon, authenticated;
-revoke execute on function fn_registrar_batida(uuid, origem_batida)     from public, anon, authenticated;
-grant execute on function api_registrar_ponto(text)                     to anon, authenticated;
+revoke execute on function fn_registrar_batida(uuid, origem_batida, numeric, numeric, numeric, text) from public, anon, authenticated;
+grant execute on function api_registrar_ponto(text, numeric, numeric, numeric, text) to anon, authenticated;
+grant execute on function api_locais_ponto_listar(text)                 to anon, authenticated;
+grant execute on function api_local_ponto_salvar(text, jsonb)           to anon, authenticated;
+grant execute on function api_local_ponto_excluir(text, uuid)           to anon, authenticated;
 grant execute on function api_batidas_dia(text, date)                   to anon, authenticated;
 grant execute on function api_banco_horas_resumo(text)                  to anon, authenticated;
 grant execute on function api_banco_horas_extrato(text, uuid, date, date) to anon, authenticated;

@@ -1,10 +1,12 @@
 import clsx from 'clsx';
 import { AlertTriangle, CheckCircle2, Fingerprint, Hourglass, Info, Timer, UserX } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { AvisoGeo, GeoIndicador } from '@/components/ponto/Geo';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatData, formatMinutos } from '@/lib/format';
+import { obterLocalizacao } from '@/lib/geo';
 import { ocorrencia, ORIGEM_BATIDA, rotuloMarcacao } from '@/lib/ponto';
 import { useHoraOficial } from '@/lib/hooks';
 import { api } from '@/lib/supabase';
@@ -30,6 +32,7 @@ export default function MeuPonto() {
   const [carregadoEm, setCarregadoEm] = useState(() => Date.now());
   const [erro, setErro] = useState<string | null>(null);
   const [registrando, setRegistrando] = useState(false);
+  const [localizando, setLocalizando] = useState(false);
   const [comprovante, setComprovante] = useState<RegistroPonto | null>(null);
   const { agora, fuso } = useHoraOficial();
 
@@ -50,13 +53,19 @@ export default function MeuPonto() {
   const registrar = async () => {
     setErro(null);
     setRegistrando(true);
+    setComprovante(null);
     try {
-      const r = await api<RegistroPonto>('api_registrar_ponto');
+      // A localização acompanha a batida; sem ela o ponto é registrado mesmo assim (Portaria 671)
+      setLocalizando(true);
+      const geo = await obterLocalizacao();
+      setLocalizando(false);
+      const r = await api<RegistroPonto>('api_registrar_ponto', { ...geo });
       setComprovante(r);
       await carregar();
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível registrar o ponto.');
     } finally {
+      setLocalizando(false);
       setRegistrando(false);
     }
   };
@@ -132,10 +141,10 @@ export default function MeuPonto() {
                   className="h-14 w-full gap-3 rounded-2xl text-base font-semibold shadow-lg shadow-black/20 sm:w-auto sm:px-10"
                 >
                   {!registrando && <Fingerprint className="h-5 w-5" />}
-                  Registrar ponto
+                  {localizando ? 'Obtendo localização…' : 'Registrar ponto'}
                 </Button>
                 <p className="mt-3 text-xs text-white/60">
-                  Próxima marcação: {proxima.toLowerCase()} · registrada no horário oficial de Brasília
+                  Próxima marcação: {proxima.toLowerCase()} · registrada no horário oficial de Brasília, com a sua localização
                 </p>
               </>
             )}
@@ -167,6 +176,7 @@ export default function MeuPonto() {
               </div>
             </div>
           )}
+          {comprovante && <AvisoGeo g={comprovante} className="mt-3" />}
 
           {!hoje || hoje.batidas.length === 0 ? (
             <p className="py-10 text-center text-sm text-slate-400">Nenhuma marcação registrada hoje.</p>
@@ -188,6 +198,7 @@ export default function MeuPonto() {
                     {ORIGEM_BATIDA[b.origem] ?? b.origem}
                     {b.nsr != null && ` · NSR ${String(b.nsr).padStart(9, '0')}`}
                   </p>
+                  <GeoIndicador g={b} />
                 </li>
               ))}
             </ol>

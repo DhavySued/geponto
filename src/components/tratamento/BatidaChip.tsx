@@ -1,5 +1,7 @@
 import clsx from 'clsx';
 import type { MouseEvent } from 'react';
+import { MapPin, MapPinOff } from 'lucide-react';
+import { descricaoGeo, GEO_STATUS } from '@/lib/geo';
 import { ORIGEM_BATIDA, rotuloMarcacao, siglaMarcacao } from '@/lib/ponto';
 import type { BatidaTratamento, StatusBatida } from '@/lib/types';
 
@@ -32,6 +34,7 @@ export function descricaoBatida(b: BatidaTratamento): string {
       ? rotuloMarcacao(b.sentido, b.turno) + (b.sentido_declarado || b.turno_declarado ? ' (classificada pelo RH)' : '')
       : null,
     ORIGEM_BATIDA[b.origem] ?? b.origem,
+    descricaoGeo(b),
     b.motivo,
     b.observacao,
     b.data_referencia !== b.data ? `Referência ${b.data_referencia.split('-').reverse().join('/')}` : null,
@@ -79,6 +82,12 @@ export function BatidaChip({
         </span>
       )}
       {outroDia && <span className="text-[9px] font-bold opacity-60" aria-label="Data de referência alterada">↺</span>}
+      {batida.geo_status && GEO_STATUS[batida.geo_status].alerta && batida.status !== 'desconsiderada' &&
+        (batida.geo_status === 'fora' ? (
+          <MapPin className="h-3 w-3 text-accent-600" aria-label="Fora do local" />
+        ) : (
+          <MapPinOff className="h-3 w-3 text-rose-600" aria-label="Sem localização" />
+        ))}
     </button>
   );
 }
@@ -103,6 +112,12 @@ export function LegendaBatidas({ dica }: { dica?: string }) {
       </span>
       <span className="flex items-center gap-1.5">
         <span className="text-[11px] font-bold text-slate-500">↺</span> Data de referência alterada
+      </span>
+      <span className="flex items-center gap-1.5">
+        <MapPin className="h-3 w-3 text-accent-600" /> Fora do local
+      </span>
+      <span className="flex items-center gap-1.5">
+        <MapPinOff className="h-3 w-3 text-rose-600" /> Sem localização
       </span>
       {dica && <span className="text-slate-400 lg:ml-auto">{dica}</span>}
     </div>

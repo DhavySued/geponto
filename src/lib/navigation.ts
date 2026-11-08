@@ -14,6 +14,7 @@ import {
   Hourglass,
   LayoutDashboard,
   Lock,
+  MapPin,
   PenLine,
   Stethoscope,
   ShieldCheck,
@@ -98,6 +99,13 @@ export const NAVEGACAO: NavGroup[] = [
         descricao: 'Feriados nacionais, estaduais, municipais e pontos facultativos',
         path: '/cadastros/feriados',
         icon: CalendarHeart,
+      },
+      {
+        chave: 'locais_ponto',
+        titulo: 'Local de Ponto',
+        descricao: 'Local e raio onde o colaborador deve bater o ponto (cerca virtual)',
+        path: '/cadastros/locais-ponto',
+        icon: MapPin,
       },
       {
         chave: 'usuarios',
@@ -188,7 +196,7 @@ export const NAVEGACAO: NavGroup[] = [
       {
         chave: 'quebra_regras',
         titulo: 'Quebra de Regras',
-        descricao: 'Interjornada, intervalo, jornada acima de 10h e extras acima do limite',
+        descricao: 'Interjornada, intervalo, jornada acima de 10h, extras acima do limite e batidas fora do local',
         path: '/relatorios/quebra-regras',
         icon: AlertOctagon,
       },

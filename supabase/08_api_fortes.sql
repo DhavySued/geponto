@@ -895,6 +895,27 @@ begin
            and (p_colaborador is null or c.id = p_colaborador)
            and (p_departamento is null or c.departamento_id = p_departamento)
            and fn_visivel(c.id)
+        union all
+        -- Geolocalização: batida fora do raio do local de ponto ou sem localização (inclui hoje)
+        select c.id, c.nome, c.matricula, d.nome, b.data_referencia,
+               case b.geo_status when 'fora' then 'fora_local' else 'sem_localizacao' end,
+               'Batida das ' || to_char(b.data_hora at time zone fn_fuso(), 'HH24:MI') ||
+               case b.geo_status
+                 when 'fora' then ' a ' || case when b.distancia_m < 1000 then b.distancia_m || ' m'
+                                                else replace(to_char(b.distancia_m / 1000.0, 'FM9990.0'), '.', ',') || ' km' end
+                                  || ' de ' || coalesce(l.nome, 'local de ponto')
+                 else ' sem localização' || coalesce(' (' || lower(b.geo_erro) || ')', '') end,
+               null::int
+          from batidas b
+          join colaboradores c      on c.id = b.colaborador_id
+          left join departamentos d on d.id = c.departamento_id
+          left join locais_ponto l  on l.id = b.local_id
+         where b.data_referencia between p_ini and least(p_fim, fn_hoje())
+           and b.status = 'valida'
+           and b.geo_status in ('fora', 'sem_localizacao')
+           and (p_colaborador is null or c.id = p_colaborador)
+           and (p_departamento is null or c.departamento_id = p_departamento)
+           and fn_visivel(c.id)
       ) r), '[]'::jsonb);
 end $$;
 

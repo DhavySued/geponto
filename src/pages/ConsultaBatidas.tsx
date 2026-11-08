@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { AlertTriangle, CalendarSearch, Filter, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GeoIndicador } from '@/components/ponto/Geo';
 import { BatidaChip, LegendaBatidas } from '@/components/tratamento/BatidaChip';
 import { useAcoesBatida } from '@/components/tratamento/useAcoesBatida';
 import { Badge } from '@/components/ui/Badge';
@@ -284,6 +285,7 @@ export default function ConsultaBatidas() {
                           <>
                             {ORIGEM_BATIDA[b.origem] ?? b.origem}
                             {b.motivo && <span className="block truncate text-slate-400" title={b.motivo}>{b.motivo}</span>}
+                            {b.geo_status && <span className="mt-0.5 flex max-w-[220px]"><GeoIndicador g={b} /></span>}
                           </>
                         ) : (
                           <span className="text-slate-300">—</span>

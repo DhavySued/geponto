@@ -5,6 +5,7 @@ import {
   Ban,
   CalendarClock,
   History,
+  MapPin,
   Pencil,
   Plus,
   RotateCcw,
@@ -18,6 +19,7 @@ import { AlertaErro, Field } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { formatData, parseISODate, toISODate } from '@/lib/format';
+import { linkMapa } from '@/lib/geo';
 import { CLASSIFICACOES, rotuloMarcacao } from '@/lib/ponto';
 import { api } from '@/lib/supabase';
 import type { BatidaTratamento, HistoricoBatida, Sentido, TratamentoAux } from '@/lib/types';
@@ -115,6 +117,10 @@ export function useAcoesBatida(aux: TratamentoAux | null, onAlterado: () => void
         );
       }
       itens.push({ tipo: 'separador' });
+    }
+    if (b.latitude != null && b.longitude != null) {
+      const { latitude, longitude } = b;
+      itens.push({ label: 'Ver localização no mapa', icon: MapPin, onClick: () => window.open(linkMapa(latitude, longitude), '_blank', 'noopener') });
     }
     itens.push({ label: 'Histórico de ajustes', icon: History, onClick: () => setModal({ tipo: 'historico', batida: b }) });
     setMenu({

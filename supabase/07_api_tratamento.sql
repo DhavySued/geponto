@@ -70,7 +70,7 @@ begin
     'nsr', b.nsr,
     'motivo_id', b.motivo_id,
     'motivo', p_motivo,
-    'observacao', b.observacao);
+    'observacao', b.observacao) || fn_batida_geo_json(b.id);
 end $$;
 
 create or replace function fn_batida_auditar(
