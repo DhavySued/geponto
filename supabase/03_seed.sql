@@ -14,6 +14,7 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('colaboradores',      'Colaboradores',             'Cadastros',  20),
   ('usuarios',           'Usuários & Permissões',     'Cadastros',  30),
   ('jornadas',           'Jornadas e Escalas',        'Cadastros',  40),
+  ('perfis_eventos',     'Perfis de Eventos',         'Cadastros',  42),
   ('feriados',           'Feriados',                  'Cadastros',  45),
   ('batidas',            'Acompanhamento de Batidas', 'Movimentos', 50),
   ('banco_horas_conversao', 'Conversão do Banco de Horas', 'Movimentos', 62),
@@ -45,6 +46,7 @@ select p.id, x.pagina, x.ver, x.editar
     ('RH', 'dashboard', true, false),
     ('RH', 'colaboradores', true, true),
     ('RH', 'jornadas', true, true),
+    ('RH', 'perfis_eventos', true, true),
     ('RH', 'batidas', true, false),
     ('RH', 'banco_horas', true, true),
     ('RH', 'banco_horas_conversao', true, true),
@@ -92,10 +94,9 @@ insert into motivos_batida (descricao, aplicacao) values
   ('Ajuste autorizado pelo gestor',       'ambos')
 on conflict (descricao) do nothing;
 
--- Eventos da folha de pagamento (o código de cada verba é configurado na tela de Totais)
+-- Eventos da folha de pagamento (o código de cada verba é configurado na tela de Totais).
+-- As horas extras têm um evento por percentual, criado a partir dos perfis de eventos.
 insert into eventos_folha (chave, descricao, unidade, ordem) values
-  ('he_util',          'Horas extras em dia útil',           'horas',  10),
-  ('he_especial',      'Horas extras em folga/feriado',      'horas',  20),
   ('adicional_noturno','Adicional noturno',                  'horas',  30),
   ('faltas_dias',      'Faltas (dias)',                      'dias',   40),
   ('faltas_horas',     'Faltas (horas)',                     'horas',  50),
@@ -105,6 +106,8 @@ insert into eventos_folha (chave, descricao, unidade, ordem) values
   ('bh_pago',          'Banco de horas convertido em pagamento', 'horas', 90),
   ('bh_descontado',    'Banco de horas convertido em desconto',  'horas', 100)
 on conflict (chave) do update set descricao = excluded.descricao, unidade = excluded.unidade, ordem = excluded.ordem;
+
+select fn_eventos_he_sincronizar();
 
 -- Feriados nacionais 2026
 insert into feriados (data, descricao) values

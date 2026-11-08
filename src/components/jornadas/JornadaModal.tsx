@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { CalendarDays, CopyCheck, Moon, Repeat, Trash2 } from 'lucide-react';
+import { CalendarDays, CopyCheck, Repeat, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
@@ -154,7 +154,7 @@ export function JornadaModal({
       onFechar={onFechar}
       largura="max-w-4xl"
       titulo={jornada?.id ? 'Editar jornada' : 'Nova jornada de trabalho'}
-      descricao="Defina a escala, as tolerâncias, as horas extras e o adicional noturno."
+      descricao="Defina os horários e a escala de trabalho."
       rodape={
         somenteLeitura ? (
           <Button variant="secondary" onClick={onFechar}>
@@ -385,88 +385,18 @@ export function JornadaModal({
           </p>
         </section>
 
-        {/* Regras */}
-        <section className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-xl p-4 ring-1 ring-slate-200/80">
-            <h3 className="text-sm font-semibold text-slate-800">Tolerâncias</h3>
-            <p className="mb-4 text-xs text-slate-500">Atrasos e variações dentro desses limites não são descontados.</p>
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Entrada (min)">
-                <input type="number" min={0} className="input" value={form.tolerancia_entrada_min}
-                  onChange={(e) => set('tolerancia_entrada_min', Number(e.target.value))} />
-              </Field>
-              <Field label="Saída (min)">
-                <input type="number" min={0} className="input" value={form.tolerancia_saida_min}
-                  onChange={(e) => set('tolerancia_saida_min', Number(e.target.value))} />
-              </Field>
-              <Field label="Diária (min)">
-                <input type="number" min={0} className="input" value={form.tolerancia_diaria_min}
-                  onChange={(e) => set('tolerancia_diaria_min', Number(e.target.value))} />
-              </Field>
-            </div>
-            <p className="mt-2 text-[11px] text-slate-400">CLT art. 58 §1º: até 5 min por marcação e 10 min por dia.</p>
-          </div>
-
-          <div className="rounded-xl p-4 ring-1 ring-slate-200/80">
-            <h3 className="text-sm font-semibold text-slate-800">Horas extras</h3>
-            <p className="mb-4 text-xs text-slate-500">Adicionais pagos quando a jornada não usa banco de horas.</p>
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Dia útil (%)">
-                <input type="number" min={0} className="input" value={form.percentual_he_dia_util}
-                  onChange={(e) => set('percentual_he_dia_util', Number(e.target.value))} />
-              </Field>
-              <Field label="Folga/feriado (%)">
-                <input type="number" min={0} className="input" value={form.percentual_he_domingo}
-                  onChange={(e) => set('percentual_he_domingo', Number(e.target.value))} />
-              </Field>
-              <Field label="Limite/dia (min)">
-                <input type="number" min={0} className="input" value={form.limite_he_diario_min}
-                  onChange={(e) => set('limite_he_diario_min', Number(e.target.value))} />
-              </Field>
-            </div>
-          </div>
-
-          <div className="rounded-xl p-4 ring-1 ring-slate-200/80 lg:col-span-2">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-              <Moon className="h-4 w-4 text-primary-600" /> Adicional noturno
-            </h3>
-            <p className="mb-4 text-xs text-slate-500">
-              CLT art. 73: trabalho entre 22h e 5h, com adicional de no mínimo 20% e hora noturna de 52min30s.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-[repeat(3,minmax(0,140px))_1fr] sm:items-end">
-              <Field label="Início">
-                <input type="time" className="input" value={form.noturno_inicio} onChange={(e) => set('noturno_inicio', e.target.value)} />
-              </Field>
-              <Field label="Fim">
-                <input type="time" className="input" value={form.noturno_fim} onChange={(e) => set('noturno_fim', e.target.value)} />
-              </Field>
-              <Field label="Adicional (%)">
-                <input type="number" min={0} className="input" value={form.percentual_noturno}
-                  onChange={(e) => set('percentual_noturno', Number(e.target.value))} />
-              </Field>
-              <Switch
-                ativo={form.hora_noturna_reduzida}
-                onChange={(v) => set('hora_noturna_reduzida', v)}
-                label="Hora noturna reduzida"
-                descricao="Cada 52min30s noturnos contam como 1 hora."
-              />
-            </div>
-          </div>
-        </section>
-
-        <div className="grid gap-2 sm:grid-cols-2">
-          <Switch
-            ativo={form.usa_banco_horas}
-            onChange={(v) => set('usa_banco_horas', v)}
-            label="Usa banco de horas"
-            descricao="Saldos diários viram créditos/débitos no banco. Desligado: extras e faltas vão para a folha."
-          />
+        <div className="grid gap-3 sm:grid-cols-2 sm:items-center">
           <Switch
             ativo={form.ativo}
             onChange={(v) => set('ativo', v)}
             label="Jornada ativa"
             descricao="Jornadas inativas não aparecem no cadastro de colaboradores."
           />
+          <p className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500 ring-1 ring-slate-200/80">
+            <SlidersHorizontal className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary-600" />
+            Tolerâncias, percentuais de hora extra, adicional noturno e banco de horas ficam no perfil de eventos de cada
+            colaborador (Cadastros › Perfis de Eventos).
+          </p>
         </div>
       </fieldset>
     </Modal>

@@ -24,6 +24,9 @@ begin
                                  from cargos where ativo), '[]'::jsonb),
     'jornadas',      coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
                                  from jornadas where ativo), '[]'::jsonb),
+    'perfis_eventos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome, 'padrao', padrao)
+                                                 order by padrao desc, nome)
+                                  from perfis_eventos where ativo), '[]'::jsonb),
     'gestores',      coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
                                  from colaboradores where situacao <> 'desligado'), '[]'::jsonb)
   );
@@ -71,13 +74,14 @@ begin
              'email', c.email, 'telefone', c.telefone, 'situacao', c.situacao,
              'data_admissao', c.data_admissao, 'data_desligamento', c.data_desligamento,
              'controla_ponto', c.controla_ponto, 'controle_ponto_inicio', fn_inicio_controle(c),
-             'cargo', g.nome, 'departamento', d.nome, 'jornada', j.nome,
+             'cargo', g.nome, 'departamento', d.nome, 'jornada', j.nome, 'perfil_evento', pe.nome,
              'tem_acesso', exists (select 1 from usuarios u where u.colaborador_id = c.id and u.status = 'ativo'))
            order by c.nome)
       from colaboradores c
       left join cargos g        on g.id = c.cargo_id
       left join departamentos d on d.id = c.departamento_id
       left join jornadas j      on j.id = c.jornada_id
+      left join perfis_eventos pe on pe.id = c.perfil_evento_id
      where fn_visivel(c.id)
   ), '[]'::jsonb);
 end $$;
@@ -154,6 +158,14 @@ begin
   v_controle := fn_txt(d, 'controle_ponto_inicio')::date;
   v_vigencia := coalesce(fn_txt(d, 'data_vigencia')::date, fn_hoje());
 
+  -- Perfil de eventos: precisa estar ativo (um perfil inativo só fica em quem já o usava)
+  if fn_txt(d, 'perfil_evento_id') is not null and not exists (
+       select 1 from perfis_eventos pe
+        where pe.id = fn_txt(d, 'perfil_evento_id')::uuid
+          and (pe.ativo or pe.id = (select c.perfil_evento_id from colaboradores c where c.id = v_id))) then
+    raise exception 'Escolha um perfil de eventos ativo.';
+  end if;
+
   if v_controle is not null and v_controle < v_admissao then
     raise exception 'O controle de ponto não pode começar antes da admissão (%).', to_char(v_admissao, 'DD/MM/YYYY');
   end if;
@@ -183,7 +195,7 @@ begin
     insert into colaboradores (
       matricula, nome, nome_social, cpf, pis, rg, data_nascimento, sexo, email, telefone,
       cep, logradouro, numero, complemento, bairro, cidade, uf,
-      cargo_id, departamento_id, jornada_id, gestor_id,
+      cargo_id, departamento_id, jornada_id, gestor_id, perfil_evento_id,
       data_admissao, data_desligamento, situacao, salario, observacoes,
       controla_ponto, controle_ponto_inicio)
     values (
@@ -196,6 +208,7 @@ begin
       fn_txt(d, 'bairro'), fn_txt(d, 'cidade'), upper(fn_txt(d, 'uf')),
       fn_txt(d, 'cargo_id')::uuid, fn_txt(d, 'departamento_id')::uuid,
       fn_txt(d, 'jornada_id')::uuid, fn_txt(d, 'gestor_id')::uuid,
+      fn_txt(d, 'perfil_evento_id')::uuid,   -- vazio: o trigger usa o perfil padrão
       v_admissao, v_deslig, v_situacao,
       fn_txt(d, 'salario')::numeric, fn_txt(d, 'observacoes'),
       coalesce((d ->> 'controla_ponto')::boolean, true), v_controle)
@@ -223,6 +236,7 @@ begin
       uf = upper(fn_txt(d, 'uf')),
       cargo_id = fn_txt(d, 'cargo_id')::uuid, departamento_id = fn_txt(d, 'departamento_id')::uuid,
       jornada_id = fn_txt(d, 'jornada_id')::uuid, gestor_id = fn_txt(d, 'gestor_id')::uuid,
+      perfil_evento_id = coalesce(fn_txt(d, 'perfil_evento_id')::uuid, perfil_evento_id),
       data_admissao = v_admissao, data_desligamento = v_deslig,
       situacao = v_situacao, salario = fn_txt(d, 'salario')::numeric, observacoes = fn_txt(d, 'observacoes'),
       controla_ponto = coalesce((d ->> 'controla_ponto')::boolean, true),
@@ -334,8 +348,6 @@ begin
                                 - coalesce(fn_minutos(jd.saida_intervalo, jd.retorno_intervalo), 0))
                        from jornada_dias jd where jd.jornada_id = j.id and not jd.folga)
                      * case when j.tipo = 'escala' then 7.0 / j.ciclo_dias else 1 end), 0),
-                  'noturno_inicio', to_char(j.noturno_inicio, 'HH24:MI'),
-                  'noturno_fim', to_char(j.noturno_fim, 'HH24:MI'),
                   'dias', coalesce((
                      select jsonb_agg(jsonb_build_object(
                               'dia_semana', jd.dia_semana, 'folga', jd.folga,
@@ -406,43 +418,19 @@ begin
   end loop;
 
   if v_id is null then
-    insert into jornadas (nome, descricao, tolerancia_entrada_min, tolerancia_saida_min, tolerancia_diaria_min,
-                          percentual_he_dia_util, percentual_he_domingo, limite_he_diario_min,
-                          usa_banco_horas, ativo, tipo, ciclo_dias, data_base,
-                          noturno_inicio, noturno_fim, percentual_noturno, hora_noturna_reduzida)
+    insert into jornadas (nome, descricao, ativo, tipo, ciclo_dias, data_base)
     values (fn_txt(d, 'nome'), fn_txt(d, 'descricao'),
-            coalesce(fn_txt(d, 'tolerancia_entrada_min')::smallint, 5),
-            coalesce(fn_txt(d, 'tolerancia_saida_min')::smallint, 5),
-            coalesce(fn_txt(d, 'tolerancia_diaria_min')::smallint, 10),
-            coalesce(fn_txt(d, 'percentual_he_dia_util')::numeric, 50),
-            coalesce(fn_txt(d, 'percentual_he_domingo')::numeric, 100),
-            coalesce(fn_txt(d, 'limite_he_diario_min')::smallint, 120),
-            coalesce((d ->> 'usa_banco_horas')::boolean, true),
             coalesce((d ->> 'ativo')::boolean, true),
             v_tipo, case when v_tipo = 'escala' then v_ciclo end,
-            case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end,
-            coalesce(fn_txt(d, 'noturno_inicio')::time, '22:00'), coalesce(fn_txt(d, 'noturno_fim')::time, '05:00'),
-            coalesce(fn_txt(d, 'percentual_noturno')::numeric, 20),
-            coalesce((d ->> 'hora_noturna_reduzida')::boolean, true))
+            case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end)
     returning id into v_id;
   else
     update jornadas set
       nome = fn_txt(d, 'nome'), descricao = fn_txt(d, 'descricao'),
-      tolerancia_entrada_min = coalesce(fn_txt(d, 'tolerancia_entrada_min')::smallint, 5),
-      tolerancia_saida_min   = coalesce(fn_txt(d, 'tolerancia_saida_min')::smallint, 5),
-      tolerancia_diaria_min  = coalesce(fn_txt(d, 'tolerancia_diaria_min')::smallint, 10),
-      percentual_he_dia_util = coalesce(fn_txt(d, 'percentual_he_dia_util')::numeric, 50),
-      percentual_he_domingo  = coalesce(fn_txt(d, 'percentual_he_domingo')::numeric, 100),
-      limite_he_diario_min   = coalesce(fn_txt(d, 'limite_he_diario_min')::smallint, 120),
-      usa_banco_horas = coalesce((d ->> 'usa_banco_horas')::boolean, true),
       ativo = coalesce((d ->> 'ativo')::boolean, true),
       tipo = v_tipo,
       ciclo_dias = case when v_tipo = 'escala' then v_ciclo end,
-      data_base = case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end,
-      noturno_inicio = coalesce(fn_txt(d, 'noturno_inicio')::time, '22:00'),
-      noturno_fim = coalesce(fn_txt(d, 'noturno_fim')::time, '05:00'),
-      percentual_noturno = coalesce(fn_txt(d, 'percentual_noturno')::numeric, 20),
-      hora_noturna_reduzida = coalesce((d ->> 'hora_noturna_reduzida')::boolean, true)
+      data_base = case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end
     where id = v_id;
     if not found then raise exception 'Jornada não encontrada.'; end if;
     delete from jornada_dias where jornada_id = v_id;
@@ -468,7 +456,7 @@ exception
   when unique_violation then
     raise exception 'Já existe uma jornada com este nome.';
   when check_violation then
-    raise exception 'Valores inválidos: confira as tolerâncias, os limites e o ciclo da escala.';
+    raise exception 'Valores inválidos: confira o ciclo e a data de início da escala.';
   when invalid_datetime_format or datetime_field_overflow then
     raise exception 'Horário inválido. Use o formato HH:MM.';
 end $$;
@@ -490,6 +478,129 @@ begin
 end $$;
 
 -- -----------------------------------------------------------------------------
+-- Perfis de eventos: tolerâncias, percentual de HE por dia (domingo … sábado e feriado),
+-- limite de HE, adicional noturno e banco de horas. Vinculados ao colaborador.
+-- -----------------------------------------------------------------------------
+create or replace function api_perfis_eventos_listar(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'perfis_eventos');
+  return coalesce((
+    select jsonb_agg(
+             to_jsonb(p) - 'created_at' - 'updated_at'
+             || jsonb_build_object(
+                  'noturno_inicio', to_char(p.noturno_inicio, 'HH24:MI'),
+                  'noturno_fim', to_char(p.noturno_fim, 'HH24:MI'),
+                  'percentual_noturno', p.percentual_noturno::float8,
+                  'he', coalesce((select jsonb_agg(jsonb_build_object('dia', h.dia, 'percentual', h.percentual::float8)
+                                                   order by h.dia)
+                                    from perfil_evento_he h where h.perfil_id = p.id), '[]'::jsonb),
+                  'colaboradores', (select count(*) from colaboradores c
+                                     where c.perfil_evento_id = p.id and c.situacao <> 'desligado'))
+             order by p.ativo desc, p.padrao desc, p.nome)
+      from perfis_eventos p
+  ), '[]'::jsonb);
+end $$;
+
+create or replace function api_perfil_evento_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d        jsonb := p_dados;
+  v_id     uuid := nullif(d ->> 'id', '')::uuid;
+  v_padrao boolean := coalesce((d ->> 'padrao')::boolean, false);
+  v_ativo  boolean := coalesce((d ->> 'ativo')::boolean, true);
+  v_era_padrao boolean;
+begin
+  perform fn_auth(p_token, 'perfis_eventos', true);
+
+  if fn_txt(d, 'nome') is null then raise exception 'Informe o nome do perfil.'; end if;
+  if jsonb_typeof(d -> 'he') <> 'array'
+     or (select count(distinct (x ->> 'dia')::int) from jsonb_array_elements(d -> 'he') x
+          where (x ->> 'dia')::int between 0 and 7 and fn_txt(x, 'percentual') is not null) <> 8 then
+    raise exception 'Informe o percentual de hora extra de todos os dias da semana e do feriado.';
+  end if;
+  if exists (select 1 from jsonb_array_elements(d -> 'he') x
+              where (x ->> 'percentual')::numeric not between 0 and 999) then
+    raise exception 'O percentual de hora extra deve ficar entre 0%% e 999%%.';
+  end if;
+  if v_padrao and not v_ativo then
+    raise exception 'O perfil padrão precisa estar ativo.';
+  end if;
+
+  select padrao into v_era_padrao from perfis_eventos where id = v_id;
+  if coalesce(v_era_padrao, false) and not v_padrao then
+    raise exception 'Este é o perfil padrão. Para trocar, marque outro perfil como padrão.';
+  end if;
+  if v_padrao then
+    update perfis_eventos set padrao = false where padrao and id is distinct from v_id;
+  end if;
+
+  if v_id is null then
+    insert into perfis_eventos (nome, descricao, padrao, ativo) values (fn_txt(d, 'nome'), fn_txt(d, 'descricao'), v_padrao, v_ativo)
+    returning id into v_id;
+  else
+    if v_era_padrao is null then raise exception 'Perfil não encontrado.'; end if;
+    if not v_ativo and exists (select 1 from colaboradores where perfil_evento_id = v_id and situacao <> 'desligado') then
+      raise exception 'Há colaboradores ativos com este perfil. Mude o perfil deles antes de desativá-lo.';
+    end if;
+  end if;
+
+  update perfis_eventos set
+    nome = fn_txt(d, 'nome'), descricao = fn_txt(d, 'descricao'), padrao = v_padrao, ativo = v_ativo,
+    tolerancia_entrada_min = coalesce(fn_txt(d, 'tolerancia_entrada_min')::smallint, 5),
+    tolerancia_saida_min   = coalesce(fn_txt(d, 'tolerancia_saida_min')::smallint, 5),
+    tolerancia_diaria_min  = coalesce(fn_txt(d, 'tolerancia_diaria_min')::smallint, 10),
+    limite_he_diario_min   = coalesce(fn_txt(d, 'limite_he_diario_min')::smallint, 120),
+    usa_banco_horas        = coalesce((d ->> 'usa_banco_horas')::boolean, true),
+    noturno_inicio         = coalesce(fn_txt(d, 'noturno_inicio')::time, '22:00'),
+    noturno_fim            = coalesce(fn_txt(d, 'noturno_fim')::time, '05:00'),
+    percentual_noturno     = coalesce(fn_txt(d, 'percentual_noturno')::numeric, 20),
+    hora_noturna_reduzida  = coalesce((d ->> 'hora_noturna_reduzida')::boolean, true)
+  where id = v_id;
+
+  insert into perfil_evento_he (perfil_id, dia, percentual)
+  select v_id, (x ->> 'dia')::smallint, (x ->> 'percentual')::numeric
+    from jsonb_array_elements(d -> 'he') x
+  on conflict (perfil_id, dia) do update set percentual = excluded.percentual;
+
+  perform fn_eventos_he_sincronizar();
+
+  -- As regras valem para os dias já encerrados: recalcula o banco de horas de quem usa o perfil
+  perform fn_processar_banco_horas(least(c.data_admissao, coalesce(c.controle_ponto_inicio, c.data_admissao)),
+                                   fn_hoje() - 1, c.id)
+     from colaboradores c
+    where c.perfil_evento_id = v_id;
+
+  return jsonb_build_object('id', v_id);
+exception
+  when unique_violation then
+    raise exception 'Já existe um perfil com este nome.';
+  when check_violation then
+    raise exception 'Valores inválidos: tolerâncias, limite e percentuais não podem ser negativos.';
+  when invalid_datetime_format or datetime_field_overflow then
+    raise exception 'Horário inválido. Use o formato HH:MM.';
+  when invalid_text_representation or numeric_value_out_of_range then
+    raise exception 'Confira os números informados.';
+end $$;
+
+create or replace function api_perfil_evento_excluir(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare v_qtd int;
+begin
+  perform fn_auth(p_token, 'perfis_eventos', true);
+  if exists (select 1 from perfis_eventos where id = p_id and padrao) then
+    raise exception 'O perfil padrão não pode ser excluído. Marque outro perfil como padrão antes.';
+  end if;
+  select count(*) into v_qtd from colaboradores where perfil_evento_id = p_id;
+  if v_qtd > 0 then
+    raise exception 'Este perfil está vinculado a % colaborador(es). Mude o perfil deles ou desative-o em vez de excluir.', v_qtd;
+  end if;
+  delete from perfis_eventos where id = p_id;
+  perform fn_eventos_he_sincronizar();
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- -----------------------------------------------------------------------------
 -- Permissões
 -- -----------------------------------------------------------------------------
 revoke execute on function fn_txt(jsonb, text) from public, anon, authenticated;
@@ -504,6 +615,9 @@ grant execute on function api_colaborador_acesso_salvar(text, uuid, text, text, 
 grant execute on function api_jornadas_listar(text)              to anon, authenticated;
 grant execute on function api_jornada_salvar(text, jsonb)        to anon, authenticated;
 grant execute on function api_jornada_excluir(text, uuid)        to anon, authenticated;
+grant execute on function api_perfis_eventos_listar(text)        to anon, authenticated;
+grant execute on function api_perfil_evento_salvar(text, jsonb)  to anon, authenticated;
+grant execute on function api_perfil_evento_excluir(text, uuid)  to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST)
 notify pgrst, 'reload schema';

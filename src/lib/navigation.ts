@@ -16,6 +16,7 @@ import {
   PenLine,
   Stethoscope,
   ShieldCheck,
+  SlidersHorizontal,
   Timer,
   Users,
   type LucideIcon,
@@ -79,9 +80,16 @@ export const NAVEGACAO: NavGroup[] = [
       {
         chave: 'jornadas',
         titulo: 'Jornadas e Escalas',
-        descricao: 'Horários semanais, escalas 12x36 e revezamento, tolerâncias, extras e noturno',
+        descricao: 'Horários semanais e escalas 12x36 e de revezamento',
         path: '/cadastros/jornadas',
         icon: CalendarClock,
+      },
+      {
+        chave: 'perfis_eventos',
+        titulo: 'Perfis de Eventos',
+        descricao: 'Tolerâncias, percentual de hora extra por dia, adicional noturno e banco de horas',
+        path: '/cadastros/perfis-eventos',
+        icon: SlidersHorizontal,
       },
       {
         chave: 'feriados',

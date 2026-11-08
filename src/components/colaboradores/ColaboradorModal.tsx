@@ -31,7 +31,7 @@ function vazio(): Colaborador {
   return {
     matricula: '', nome: '', nome_social: '', cpf: '', pis: '', rg: '', data_nascimento: '', sexo: '',
     email: '', telefone: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '',
-    cargo_id: '', departamento_id: '', jornada_id: '', gestor_id: '',
+    cargo_id: '', departamento_id: '', jornada_id: '', perfil_evento_id: '', gestor_id: '',
     data_admissao: '', data_desligamento: '', situacao: 'ativo', salario: '', observacoes: '',
     // Novo colaborador: controle começa hoje, para não gerar faltas desde uma admissão antiga
     controla_ponto: true, controle_ponto_inicio: toISODate(new Date()), data_vigencia: toISODate(new Date()),
@@ -126,7 +126,7 @@ function Historico({ itens }: { itens: HistoricoItem[] }) {
   if (itens.length === 0) return <p className="py-8 text-center text-sm text-slate-400">Sem movimentações registradas.</p>;
   const cor: Record<string, string> = {
     admissao: 'bg-emerald-500', situacao: 'bg-accent-500', cargo: 'bg-primary-600',
-    departamento: 'bg-sky-500', jornada: 'bg-violet-500', cadastro: 'bg-slate-400',
+    departamento: 'bg-sky-500', jornada: 'bg-violet-500', perfil_evento: 'bg-amber-500', cadastro: 'bg-slate-400',
   };
   return (
     <ol className="relative space-y-5 border-l border-slate-200 pl-6">
@@ -322,6 +322,7 @@ export function ColaboradorModal({
   };
 
   const alterouComVigencia = !!original && CAMPOS_COM_VIGENCIA.some((k) => form[k] !== original[k]);
+  const perfisEventos = aux?.perfis_eventos ?? [];
   const admissaoInvalida = tentouSalvar && !form.data_admissao;
 
   const criarAuxiliar = (tipo: 'departamentos' | 'cargos', campo: 'departamento_id' | 'cargo_id') => async (nome: string) => {
@@ -547,6 +548,23 @@ export function ColaboradorModal({
                     </option>
                   )}
                   {aux.jornadas.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
+                </select>
+              </Field>
+              <Field
+                label="Perfil de eventos"
+                dica="Tolerâncias, percentual de hora extra por dia, adicional noturno e banco de horas."
+              >
+                <select className="input" value={form.perfil_evento_id} onChange={(e) => set('perfil_evento_id', e.target.value)}>
+                  {!form.perfil_evento_id && (
+                    <option value="">
+                      Perfil padrão{perfisEventos.find((p) => p.padrao) ? ` (${perfisEventos.find((p) => p.padrao)!.nome})` : ''}
+                    </option>
+                  )}
+                  {/* Perfil desativado depois: continua aparecendo para quem já o usa */}
+                  {form.perfil_evento_id && !perfisEventos.some((o) => o.id === form.perfil_evento_id) && (
+                    <option value={form.perfil_evento_id}>Perfil atual (inativo)</option>
+                  )}
+                  {perfisEventos.map((o) => <option key={o.id} value={o.id}>{o.nome}{o.padrao ? ' · padrão' : ''}</option>)}
                 </select>
               </Field>
               <Field label="Gestor imediato">

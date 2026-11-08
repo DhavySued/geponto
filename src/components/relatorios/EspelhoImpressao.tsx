@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import { formatData, formatMinutos } from '@/lib/format';
+import { textoPercentual } from '@/lib/perfilEvento';
 import { ocorrencia } from '@/lib/ponto';
 import type { EspelhoColaborador, EspelhoPonto } from '@/lib/types';
 
@@ -130,8 +131,11 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
         <dl className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-5 print:grid-cols-5">
           <Info rotulo="Previsto" valor={formatMinutos(t.previsto_min)} />
           <Info rotulo="Trabalhado" valor={formatMinutos(t.trabalhado_min)} />
-          <Info rotulo="HE dia útil" valor={formatMinutos(t.he_util_min)} />
-          <Info rotulo="HE folga/feriado" valor={formatMinutos(t.he_especial_min)} />
+          {(t.he ?? []).length === 0 ? (
+            <Info rotulo="Horas extras" valor={formatMinutos(0)} />
+          ) : (
+            (t.he ?? []).map((x) => <Info key={x.chave} rotulo={`HE ${textoPercentual(x.percentual)}`} valor={formatMinutos(x.minutos)} />)
+          )}
           <Info rotulo="Adic. noturno" valor={formatMinutos(t.noturno_min)} />
           <Info rotulo="Faltas" valor={`${t.faltas} dia(s)`} />
           <Info rotulo="Horas a descontar" valor={formatMinutos(t.debito_min)} />

@@ -6,8 +6,6 @@ import type { EventoFolha, TotaisColaborador } from './types';
  * o mesmo débito em dois eventos. Os demais campos de faltas e atrasos são os da tela.
  */
 export const VALOR_EVENTO: Record<string, (t: TotaisColaborador) => number> = {
-  he_util: (t) => t.he_util_min,
-  he_especial: (t) => t.he_especial_min,
   adicional_noturno: (t) => t.noturno_min,
   faltas_dias: (t) => t.faltas_folha_dias,
   faltas_horas: (t) => t.faltas_folha_min,
@@ -17,6 +15,15 @@ export const VALOR_EVENTO: Record<string, (t: TotaisColaborador) => number> = {
   bh_pago: (t) => t.bh_pago_min,
   bh_descontado: (t) => t.bh_descontado_min,
 };
+
+/** Eventos de hora extra: um por percentual (he_50, he_100, he_62_5…), vindos dos perfis de eventos */
+export const ehEventoHe = (chave: string) => /^he_\d/.test(chave);
+
+/** Quantidade do evento para o colaborador; null quando o evento não é exportável */
+export function valorEvento(chave: string, t: TotaisColaborador): number | null {
+  if (ehEventoHe(chave)) return (t.he ?? []).find((h) => h.chave === chave)?.minutos ?? 0;
+  return VALOR_EVENTO[chave]?.(t) ?? null;
+}
 
 export type FormatoHoras = 'decimal' | 'hhmm';
 export type LayoutArquivo = 'csv' | 'txt';
@@ -42,11 +49,11 @@ export function gerarArquivoFolha(
   formato: FormatoHoras,
   layout: LayoutArquivo,
 ): { conteudo: string; linhas: number } {
-  const ativos = eventos.filter((e) => e.ativo && e.codigo && VALOR_EVENTO[e.chave]);
+  const ativos = eventos.filter((e) => e.ativo && e.codigo && (VALOR_EVENTO[e.chave] || ehEventoHe(e.chave)));
   const linhas: string[] = layout === 'csv' ? ['matricula;evento;descricao;quantidade'] : [];
   for (const c of colaboradores) {
     for (const ev of ativos) {
-      const v = VALOR_EVENTO[ev.chave](c);
+      const v = valorEvento(ev.chave, c);
       if (!v) continue;
       const q = quantidade(v, ev.unidade, formato, layout);
       linhas.push(

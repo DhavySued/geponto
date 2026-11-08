@@ -18,6 +18,7 @@ import Jornadas from '@/pages/Jornadas';
 import Login from '@/pages/Login';
 import MeuPonto from '@/pages/MeuPonto';
 import Ocorrencias from '@/pages/Ocorrencias';
+import PerfisEventos from '@/pages/PerfisEventos';
 import QuebraRegras from '@/pages/QuebraRegras';
 import TotaisPeriodo from '@/pages/TotaisPeriodo';
 import TratamentoBatidas from '@/pages/TratamentoBatidas';
@@ -52,6 +53,7 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   dashboard: Dashboard,
   colaboradores: Colaboradores,
   jornadas: Jornadas,
+  perfis_eventos: PerfisEventos,
   meu_ponto: MeuPonto,
   banco_horas: BancoHoras,
   banco_horas_conversao: ConversaoBancoHoras,

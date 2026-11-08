@@ -489,6 +489,16 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- Soma das horas extras por percentual: [{p, m}, …] → [{chave, percentual, minutos}] (ordem crescente)
+create or replace function fn_he_por_percentual(p_itens jsonb)
+returns jsonb language sql immutable set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('chave', fn_he_chave(x.p), 'percentual', x.p::float8, 'minutos', x.m)
+                            order by x.p), '[]'::jsonb)
+    from (select (i ->> 'p')::numeric as p, sum((i ->> 'm')::int)::int as m
+            from jsonb_array_elements(coalesce(p_itens, '[]'::jsonb)) i
+           group by 1) x;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- Espelho de ponto (Portaria 671: marcações originais e tratadas identificadas)
 -- -----------------------------------------------------------------------------
@@ -517,7 +527,7 @@ begin
                'data', a.data,
                'previsto', fn_horario_texto(a.jornada_id, a.data),
                'previsto_min', a.previsto_min, 'trabalhado_min', a.trabalhado_min,
-               'extra_min', a.extra_min, 'debito_min', a.debito_min, 'he_especial', a.he_especial,
+               'extra_min', a.extra_min, 'debito_min', a.debito_min, 'he_percentual', a.he_percentual::float8,
                'atraso_min', a.atraso_min, 'saida_antecipada_min', a.saida_antecipada_min,
                'noturno_min', a.noturno_reduzido_min, 'abonado_min', a.abonado_min,
                'banco_horas', a.banco_horas, 'ocorrencia', a.ocorrencia,
@@ -536,8 +546,9 @@ begin
       select jsonb_build_object(
                'previsto_min', coalesce(sum(previsto_min), 0),
                'trabalhado_min', coalesce(sum(trabalhado_min), 0),
-               'he_util_min', coalesce(sum(extra_min) filter (where not banco_horas and not he_especial), 0),
-               'he_especial_min', coalesce(sum(extra_min) filter (where not banco_horas and he_especial), 0),
+               'he_min', coalesce(sum(extra_min) filter (where not banco_horas), 0),
+               'he', fn_he_por_percentual(jsonb_agg(jsonb_build_object('p', he_percentual, 'm', extra_min))
+                                            filter (where not banco_horas and extra_min > 0)),
                'debito_min', coalesce(sum(debito_min) filter (where not banco_horas and not falta), 0),
                'faltas', count(*) filter (where falta),
                'atraso_min', coalesce(sum(atraso_min), 0),
@@ -637,8 +648,10 @@ begin
                  count(*) filter (where t.qtd_batidas > 0)                                          as dias_trabalhados,
                  coalesce(sum(t.previsto_min), 0)::int                                             as previsto_min,
                  coalesce(sum(t.trabalhado_min), 0)::int                                           as trabalhado_min,
-                 coalesce(sum(t.extra_min) filter (where not t.banco_horas and not t.he_especial), 0)::int as he_util_min,
-                 coalesce(sum(t.extra_min) filter (where not t.banco_horas and t.he_especial), 0)::int     as he_especial_min,
+                 -- Horas extras pagas (sem banco de horas), separadas pelo percentual do dia
+                 coalesce(sum(t.extra_min) filter (where not t.banco_horas), 0)::int                as he_min,
+                 fn_he_por_percentual(jsonb_agg(jsonb_build_object('p', t.he_percentual, 'm', t.extra_min))
+                                        filter (where not t.banco_horas and t.extra_min > 0))      as he,
                  coalesce(sum(t.noturno_reduzido_min), 0)::int                                     as noturno_min,
                  count(*) filter (where t.falta)                                                    as faltas_dias,
                  coalesce(sum(t.debito_min) filter (where t.falta), 0)::int                        as faltas_min,
@@ -692,7 +705,7 @@ end $$;
 -- -----------------------------------------------------------------------------
 -- Quebra de regras (CLT): interjornada < 11h, intervalo intrajornada insuficiente,
 -- jornada acima de 10h, hora extra acima do limite diário e marcação ímpar.
--- O intervalo aceita a tolerância de marcação da jornada (ex.: 56 min com tolerância de 5 min não quebra).
+-- O intervalo aceita a tolerância de entrada do perfil de eventos (ex.: 56 min com tolerância de 5 min não quebra).
 -- -----------------------------------------------------------------------------
 create or replace function api_quebra_regras(
   p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null)
@@ -711,7 +724,7 @@ begin
           from fn_apuracao(p_ini, least(p_fim, fn_hoje() - 1)) a
           join colaboradores c      on c.id = a.colaborador_id
           left join departamentos d on d.id = c.departamento_id
-          left join jornadas j      on j.id = a.jornada_id
+          left join perfis_eventos j on j.id = c.perfil_evento_id   -- tolerâncias e limite de HE do perfil
           cross join lateral (values
             ('interjornada', a.interjornada_min is not null and a.qtd_batidas > 0 and a.interjornada_min < 660,
              'Descanso entre jornadas abaixo de 11h (CLT art. 66)', a.interjornada_min),
@@ -724,7 +737,7 @@ begin
             ('jornada_maxima', a.trabalhado_min > greatest(600, a.previsto_min + coalesce(j.tolerancia_diaria_min, 0)),
              'Mais de 10h trabalhadas no dia (CLT art. 59)', a.trabalhado_min),
             ('limite_he', j.limite_he_diario_min > 0 and a.extra_min > j.limite_he_diario_min,
-             'Horas extras acima do limite diário da jornada', a.extra_min),
+             'Horas extras acima do limite diário do perfil de eventos', a.extra_min),
             ('marcacao_impar', a.ocorrencia = 'inconsistente',
              'Marcação ímpar: entrada sem saída ou saída sem entrada', null::int)
           ) q(regra, violou, detalhe, minutos)
@@ -746,6 +759,7 @@ revoke execute on function fn_auth_alguma(text, text[], boolean)              fr
 revoke execute on function fn_colaborador_do_usuario(uuid)                    from public, anon, authenticated;
 revoke execute on function fn_solicitacao_json(solicitacoes)                  from public, anon, authenticated;
 revoke execute on function fn_espelho_colaborador(uuid, date, date)           from public, anon, authenticated;
+revoke execute on function fn_he_por_percentual(jsonb)                        from public, anon, authenticated;
 
 grant execute on function api_filtros_auxiliares(text)                                 to anon, authenticated;
 grant execute on function api_feriados_listar(text, integer)                           to anon, authenticated;

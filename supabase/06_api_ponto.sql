@@ -210,6 +210,7 @@ begin
             join colaboradores c      on c.id = a.colaborador_id
             left join departamentos d on d.id = c.departamento_id
             left join jornadas j      on j.id = a.jornada_id
+            left join perfis_eventos pe on pe.id = c.perfil_evento_id
             left join lateral fn_jornada_dia(c.id, v_data) jd on true
             cross join lateral (
               select case
@@ -220,7 +221,7 @@ begin
                   case when a.qtd_batidas = 0 then 'ausente'
                        when a.impar then 'inconsistente'
                        else 'finalizado' end
-                when a.qtd_batidas = 0 and v_agora > jd.entrada + make_interval(mins => coalesce(j.tolerancia_entrada_min, 0))
+                when a.qtd_batidas = 0 and v_agora > jd.entrada + make_interval(mins => coalesce(pe.tolerancia_entrada_min, 0))
                   then 'ausente'
                 when a.qtd_batidas = 0 then 'aguardando'
                 when a.ultimo_sentido = 'E' then 'em_jornada'

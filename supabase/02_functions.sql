@@ -470,7 +470,7 @@ returns table (
   abonado_min           integer,   -- abono parcial efetivamente aplicado
   extra_min             integer,   -- saldo positivo (hora extra / crédito)
   debito_min            integer,   -- saldo negativo em módulo (horas faltantes / débito)
-  he_especial           boolean,   -- extra em folga, DSR ou feriado (percentual de domingo/feriado)
+  he_percentual         numeric,   -- percentual de HE do dia, pelo perfil de eventos (dia da semana ou feriado)
   noturno_min           integer,   -- minutos de relógio na faixa noturna
   noturno_reduzido_min  integer,   -- com a hora noturna reduzida (52min30s), quando aplicável
   intervalo_min         integer,   -- descanso intrajornada realizado
@@ -484,7 +484,8 @@ with cfg as (
   select fn_fuso() as tz, fn_hoje() as hoje
 ),
 dias as (
-  select c.id as colaborador_id, d::date as data, fn_jornada_vigente(c.id, d::date) as jornada_id
+  select c.id as colaborador_id, d::date as data, fn_jornada_vigente(c.id, d::date) as jornada_id,
+         c.perfil_evento_id as perfil_id
     from colaboradores c
    cross join generate_series(p_ini, p_fim, interval '1 day') d
    where (p_colaborador is null or c.id = p_colaborador)
@@ -495,9 +496,10 @@ dias as (
 base as (
   select dd.colaborador_id, dd.data, dd.jornada_id,
          jd.folga, jd.entrada, jd.saida, jd.saida_intervalo, jd.retorno_intervalo,
-         j.tolerancia_entrada_min, j.tolerancia_saida_min, j.tolerancia_diaria_min,
-         j.noturno_inicio, j.noturno_fim, j.hora_noturna_reduzida,
-         coalesce(j.usa_banco_horas, false) as usa_bh,
+         pe.tolerancia_entrada_min, pe.tolerancia_saida_min, pe.tolerancia_diaria_min,
+         pe.hora_noturna_reduzida,
+         coalesce(pe.usa_banco_horas, false) as usa_bh,
+         coalesce(ph.percentual, 50) as he_percentual,
          (f.id is not null) as feriado,
          a.tipo as ausencia_tipo,
          coalesce(a.abona, false) as abona,
@@ -507,6 +509,9 @@ base as (
     left join jornada_dias jd on jd.jornada_id = dd.jornada_id
                              and jd.dia_semana = fn_jornada_indice(j.tipo, j.ciclo_dias, j.data_base, dd.data)
     left join feriados f      on f.data = dd.data
+    left join perfis_eventos pe on pe.id = dd.perfil_id
+    left join perfil_evento_he ph on ph.perfil_id = dd.perfil_id
+                                 and ph.dia = case when f.id is not null then 7 else extract(dow from dd.data)::int end
     left join lateral (
       select au.tipo, au.abona
         from ausencias au
@@ -564,11 +569,12 @@ marc_pares as (
          (array_agg(p.tur order by p.ini))[1] as primeiro_tur,
          sum(extract(epoch from p.fim - p.ini) / 60)::int as trabalhado,
          sum(fn_minutos_noturnos(p.ini at time zone cfg.tz, p.fim at time zone cfg.tz,
-                                 coalesce(j.noturno_inicio, '22:00'), coalesce(j.noturno_fim, '05:00')))::int as noturno,
+                                 coalesce(pe.noturno_inicio, '22:00'), coalesce(pe.noturno_fim, '05:00')))::int as noturno,
          (sum(extract(epoch from p.pausa) / 60))::int as pausa
     from pares p
    cross join cfg
-    left join jornadas j on j.id = fn_jornada_vigente(p.colaborador_id, p.data_referencia)
+    left join colaboradores co  on co.id = p.colaborador_id
+    left join perfis_eventos pe on pe.id = co.perfil_evento_id
    group by p.colaborador_id, p.data_referencia
 ),
 marc_inter as (
@@ -660,7 +666,7 @@ select f.colaborador_id,
        f.abonado,
        greatest(f.saldo, 0),
        greatest(-f.saldo, 0),
-       (coalesce(f.folga, true) or f.feriado),
+       f.he_percentual,
        f.noturno,
        case when coalesce(f.hora_noturna_reduzida, true) then round(f.noturno * 60 / 52.5)::int else f.noturno end,
        case when f.pares > 1 then f.pausa end,
@@ -959,7 +965,7 @@ begin
                 when a.ocorrencia like 'ausencia:%' then 'ausencia'
                 when a.previsto_min = 0 and a.qtd_batidas = 0 then 'folga'
                 when a.qtd_batidas = 0 and v_agora > jd.entrada + make_interval(mins => coalesce(
-                       (select j.tolerancia_entrada_min from jornadas j where j.id = a.jornada_id), 0))
+                       (select pe.tolerancia_entrada_min from perfis_eventos pe where pe.id = c.perfil_evento_id), 0))
                   then 'ausente'
                 when a.qtd_batidas = 0 then 'aguardando'
                 when a.ultimo_sentido = 'E' then 'em_jornada'
@@ -972,6 +978,29 @@ begin
 
   return v_out;
 end $$;
+
+-- -----------------------------------------------------------------------------
+-- Eventos da folha de horas extras: um por percentual usado nos perfis de eventos
+--   50 → 'he_50' ("Horas extras 50%"), 62.5 → 'he_62_5' ("Horas extras 62,5%")
+-- -----------------------------------------------------------------------------
+create or replace function fn_he_chave(p numeric)
+returns text language sql immutable as $$
+  select 'he_' || replace(trim_scale(p)::text, '.', '_');
+$$;
+
+create or replace function fn_eventos_he_sincronizar()
+returns void language sql volatile set search_path = public as $$
+  insert into eventos_folha (chave, descricao, unidade, ordem)
+  select distinct fn_he_chave(h.percentual),
+         'Horas extras ' || replace(trim_scale(h.percentual)::text, '.', ',') || '%',
+         'horas', least(29, 10 + round(h.percentual / 10))::smallint
+    from perfil_evento_he h
+  on conflict (chave) do nothing;
+  -- Percentual que deixou de ser usado e não tem código cadastrado sai da lista
+  delete from eventos_folha e
+   where e.chave like 'he\_%' and e.codigo is null
+     and not exists (select 1 from perfil_evento_he h where fn_he_chave(h.percentual) = e.chave);
+$$;
 
 -- -----------------------------------------------------------------------------
 -- Permissões de execução

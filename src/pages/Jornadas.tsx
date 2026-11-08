@@ -95,11 +95,7 @@ function JornadaCard({ j, onAbrir }: { j: Jornada; onAbrir: () => void }) {
           <Users className="h-3.5 w-3.5" />
           {j.colaboradores ?? 0} colaborador{j.colaboradores === 1 ? '' : 'es'}
         </span>
-        <span className="flex items-center gap-2">
-          <span>Tol. {j.tolerancia_entrada_min}min</span>
-          <span>HE {Number(j.percentual_he_dia_util)}%</span>
-          <Pencil className="h-3.5 w-3.5 text-slate-300 transition group-hover:text-primary-600" />
-        </span>
+        <Pencil className="h-3.5 w-3.5 text-slate-300 transition group-hover:text-primary-600" />
       </div>
     </button>
   );
@@ -132,7 +128,7 @@ export default function Jornadas() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Jornadas e escalas</h2>
-          <p className="mt-1 text-sm text-slate-500">Jornadas semanais e escalas de revezamento (12x36, 5x1, 6x2…), tolerâncias, horas extras e adicional noturno.</p>
+          <p className="mt-1 text-sm text-slate-500">Horários das jornadas semanais e das escalas de revezamento (12x36, 5x1, 6x2…). As regras de cálculo ficam nos perfis de eventos.</p>
         </div>
         {podeEditar && (
           <Button variant="accent" onClick={novo}>

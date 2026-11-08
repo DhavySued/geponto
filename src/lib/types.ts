@@ -4,6 +4,7 @@ export type PaginaChave =
   | 'colaboradores'
   | 'usuarios'
   | 'jornadas'
+  | 'perfis_eventos'
   | 'batidas'
   | 'banco_horas'
   | 'banco_horas_conversao'
@@ -119,6 +120,7 @@ export interface CadastrosAuxiliares {
   departamentos: Opcao[];
   cargos: Opcao[];
   jornadas: Opcao[];
+  perfis_eventos: (Opcao & { padrao: boolean })[];
   gestores: Opcao[];
 }
 
@@ -135,6 +137,7 @@ export interface ColaboradorResumo {
   cargo: string | null;
   departamento: string | null;
   jornada: string | null;
+  perfil_evento: string | null;
   controla_ponto: boolean;
   controle_ponto_inicio: string;
   tem_acesso: boolean;
@@ -188,6 +191,8 @@ export interface Colaborador {
   cargo_id: string;
   departamento_id: string;
   jornada_id: string;
+  /** Perfil de eventos (regras de cálculo); vazio = perfil padrão */
+  perfil_evento_id: string;
   gestor_id: string;
   data_admissao: string;
   data_desligamento: string;
@@ -222,21 +227,43 @@ export interface Jornada {
   tipo: TipoJornada;
   ciclo_dias: number | null;
   data_base: string | null;
-  noturno_inicio: string;
-  noturno_fim: string;
-  percentual_noturno: number;
-  hora_noturna_reduzida: boolean;
-  tolerancia_entrada_min: number;
-  tolerancia_saida_min: number;
-  tolerancia_diaria_min: number;
-  percentual_he_dia_util: number;
-  percentual_he_domingo: number;
-  limite_he_diario_min: number;
-  usa_banco_horas: boolean;
   ativo: boolean;
   colaboradores?: number;
   minutos_semana?: number;
   dias: JornadaDia[];
+}
+
+/** Percentual de hora extra de um dia: 0 = domingo … 6 = sábado, 7 = feriado */
+export interface PerfilEventoHe {
+  dia: number;
+  percentual: number;
+}
+
+/** Regras de cálculo do ponto, vinculadas ao colaborador (separadas da jornada) */
+export interface PerfilEvento {
+  id?: string;
+  nome: string;
+  descricao: string | null;
+  padrao: boolean;
+  tolerancia_entrada_min: number;
+  tolerancia_saida_min: number;
+  tolerancia_diaria_min: number;
+  limite_he_diario_min: number;
+  usa_banco_horas: boolean;
+  noturno_inicio: string;
+  noturno_fim: string;
+  percentual_noturno: number;
+  hora_noturna_reduzida: boolean;
+  ativo: boolean;
+  he: PerfilEventoHe[];
+  colaboradores?: number;
+}
+
+/** Horas extras pagas de um percentual (chave = evento da folha, ex.: he_50) */
+export interface HePercentual {
+  chave: string;
+  percentual: number;
+  minutos: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -677,7 +704,8 @@ export interface EspelhoDia {
   trabalhado_min: number;
   extra_min: number;
   debito_min: number;
-  he_especial: boolean;
+  /** Percentual de HE do dia, pelo perfil de eventos */
+  he_percentual: number;
   atraso_min: number;
   saida_antecipada_min: number;
   noturno_min: number;
@@ -704,8 +732,8 @@ export interface EspelhoColaborador {
   totais: {
     previsto_min: number;
     trabalhado_min: number;
-    he_util_min: number;
-    he_especial_min: number;
+    he_min: number;
+    he: HePercentual[];
     debito_min: number;
     faltas: number;
     atraso_min: number;
@@ -741,8 +769,9 @@ export interface TotaisColaborador {
   dias_trabalhados: number;
   previsto_min: number;
   trabalhado_min: number;
-  he_util_min: number;
-  he_especial_min: number;
+  /** Horas extras pagas (sem banco de horas): total e por percentual */
+  he_min: number;
+  he: HePercentual[];
   noturno_min: number;
   faltas_dias: number;
   faltas_min: number;

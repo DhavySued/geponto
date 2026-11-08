@@ -9,16 +9,34 @@ import { useToast } from '@/components/ui/Toast';
 import { baixarArquivo, gerarArquivoFolha, type FormatoHoras, type LayoutArquivo } from '@/lib/exportacao';
 import { formatData, formatMinutos } from '@/lib/format';
 import { competencia, useFiltrosAux } from '@/lib/hooks';
+import { textoPercentual } from '@/lib/perfilEvento';
 import { api } from '@/lib/supabase';
 import type { EventoFolha, TotaisColaborador, TotaisPeriodo as TotaisPeriodoT } from '@/lib/types';
 
 const h = (min: number) => (min ? formatMinutos(min) : '—');
 
-const COLUNAS: { titulo: string; valor: (t: TotaisColaborador) => string; destaque?: (t: TotaisColaborador) => string }[] = [
+type Coluna = { titulo: string; valor: (t: TotaisColaborador) => string; destaque?: (t: TotaisColaborador) => string };
+
+const heDe = (t: TotaisColaborador, p: number) => (t.he ?? []).find((x) => x.percentual === p)?.minutos ?? 0;
+
+/** Uma coluna de hora extra para cada percentual que aparece no período (HE 50%, HE 100%…) */
+function colunas(percentuais: number[]): Coluna[] {
+  const he: Coluna[] = percentuais.length
+    ? percentuais.map((p) => ({
+        titulo: `HE ${textoPercentual(p)}`,
+        valor: (t) => h(heDe(t, p)),
+        destaque: (t) => (heDe(t, p) ? 'text-primary-700 font-semibold' : ''),
+      }))
+    : [{ titulo: 'Horas extras', valor: () => '—' }];
+  return [...COLUNAS_INICIO, ...he, ...COLUNAS_FIM];
+}
+
+const COLUNAS_INICIO: Coluna[] = [
   { titulo: 'Dias trab.', valor: (t) => String(t.dias_trabalhados) },
   { titulo: 'Trabalhado', valor: (t) => h(t.trabalhado_min) },
-  { titulo: 'HE dia útil', valor: (t) => h(t.he_util_min), destaque: (t) => (t.he_util_min ? 'text-primary-700 font-semibold' : '') },
-  { titulo: 'HE folga/fer.', valor: (t) => h(t.he_especial_min), destaque: (t) => (t.he_especial_min ? 'text-primary-700 font-semibold' : '') },
+];
+
+const COLUNAS_FIM: Coluna[] = [
   { titulo: 'Noturno', valor: (t) => h(t.noturno_min) },
   { titulo: 'Faltas', valor: (t) => (t.faltas_dias ? `${t.faltas_dias}d · ${formatMinutos(t.faltas_min)}` : '—'), destaque: (t) => (t.faltas_dias ? 'text-rose-600 font-semibold' : '') },
   { titulo: 'Atrasos/saídas', valor: (t) => h(t.atraso_min + t.saida_antecipada_min), destaque: (t) => (t.atraso_min + t.saida_antecipada_min ? 'text-accent-700' : '') },
@@ -102,6 +120,9 @@ export default function TotaisPeriodo() {
   };
 
   const soma = (f: (t: TotaisColaborador) => number) => dados?.colaboradores.reduce((s, t) => s + f(t), 0) ?? 0;
+  const percentuais = [...new Set((dados?.colaboradores ?? []).flatMap((t) => (t.he ?? []).map((x) => x.percentual)))].sort((a, b) => a - b);
+  const COLUNAS = colunas(percentuais);
+  const resumoHe = percentuais.map((p) => `${textoPercentual(p)}: ${formatMinutos(soma((t) => heDe(t, p)))}`).join(' · ');
   const inconsistentes = dados?.colaboradores.filter((t) => t.inconsistencias > 0).length ?? 0;
 
   return (
@@ -166,18 +187,18 @@ export default function TotaisPeriodo() {
         </div>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
             {[
-              ['HE dia útil', formatMinutos(soma((t) => t.he_util_min))],
-              ['HE folga/feriado', formatMinutos(soma((t) => t.he_especial_min))],
+              ['Horas extras', formatMinutos(soma((t) => t.he_min ?? 0)), resumoHe],
               ['Adicional noturno', formatMinutos(soma((t) => t.noturno_min))],
               ['Faltas', `${soma((t) => t.faltas_dias)} dia(s)`],
               ['Atrasos e saídas', formatMinutos(soma((t) => t.atraso_min + t.saida_antecipada_min))],
               ['DSR descontados', String(soma((t) => t.dsr_perdidos))],
-            ].map(([t, v]) => (
+            ].map(([t, v, extra]) => (
               <div key={t} className="card p-4">
                 <p className="text-xs text-slate-500">{t}</p>
                 <p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{v}</p>
+                {extra && <p className="mt-0.5 text-[11px] tabular-nums text-slate-400">{extra}</p>}
               </div>
             ))}
           </div>

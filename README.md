@@ -22,7 +22,7 @@ No **SQL Editor** do Supabase, execute nesta ordem:
 | `supabase/02_functions.sql` | Autenticação, apuração diária, banco de horas e API do dashboard |
 | `supabase/03_seed.sql` | Empresa, páginas, perfis, permissões e feriados de 2026 |
 | `supabase/04_dados_demo.sql` | *(opcional)* jornadas de exemplo, 10 colaboradores e cerca de 5 semanas de batidas |
-| `supabase/05_api_cadastros.sql` | API dos cadastros de colaboradores, departamentos, cargos e jornadas |
+| `supabase/05_api_cadastros.sql` | API dos cadastros de colaboradores, departamentos, cargos, jornadas e perfis de eventos |
 | `supabase/06_api_ponto.sql` | Meu Ponto (registro pelo colaborador), banco de horas e conversão do saldo |
 | `supabase/07_api_tratamento.sql` | Tratamento e consulta de batidas (incluir, editar, apagar, desconsiderar, sentido, data de referência) |
 | `supabase/08_api_fortes.sql` | Feriados, ocorrências em lote, fechamento, espelho, totais/folha e quebra de regras |
@@ -52,8 +52,20 @@ Todos os scripts podem ser executados de novo sem erro. Para atualizar um banco 
 ### Tabelas
 
 `empresa`, `paginas`, `perfis`, `perfil_permissoes`, `usuarios`, `sessoes`, `departamentos`, `cargos`,
-`jornadas`, `jornada_dias`, `feriados`, `colaboradores`, `colaborador_historico`, `colaborador_jornadas`, `ausencias`,
-`batidas`, `batida_ajustes`, `motivos_batida`, `banco_horas`, `fechamentos`, `solicitacoes`, `eventos_folha`.
+`jornadas`, `jornada_dias`, `perfis_eventos`, `perfil_evento_he`, `feriados`, `colaboradores`, `colaborador_historico`,
+`colaborador_jornadas`, `ausencias`, `batidas`, `batida_ajustes`, `motivos_batida`, `banco_horas`, `fechamentos`,
+`solicitacoes`, `eventos_folha`.
+
+### Jornada × perfil de eventos
+
+- A **jornada** guarda só horários e escala.
+- O **perfil de eventos** (Cadastros › Perfis de Eventos) guarda as regras de cálculo e é escolhido no cadastro de cada
+  colaborador: tolerâncias (entrada, saída e geral do dia), **percentual de hora extra por dia** (domingo a sábado e feriado),
+  limite diário de HE, adicional noturno e uso do banco de horas.
+- Quem não escolhe perfil fica com o perfil marcado como **padrão**. Alterar um perfil refaz o banco de horas de quem o usa
+  (períodos fechados não mudam).
+- Ao atualizar um banco antigo, o `01_schema.sql` cria os perfis a partir das regras que estavam nas jornadas
+  (um perfil por combinação de regras; o mais usado vira "Padrão") e vincula cada colaborador ao perfil da sua jornada.
 
 ### Regras de apuração (`fn_apuracao`)
 
@@ -61,8 +73,9 @@ Todos os scripts podem ser executados de novo sem erro. Para atualizar um banco 
 - **Escalas:** jornada `semanal` usa o dia da semana; jornada `escala` (12x36, 5x1, 6x2…) usa o dia do ciclo,
   contado a partir de `data_base` (`fn_jornada_indice`).
 - **Virada de turno:** batida até 4h depois da saída de um turno que atravessa a meia-noite conta no dia em que ele começou.
-- **Horas extras:** saldo positivo; extras em folga/feriado usam o percentual de "folga/feriado". Jornadas sem banco de horas
-  mandam extras e descontos para a folha (Totais); com banco, o saldo vai para o banco.
+- **Horas extras:** saldo positivo do dia, com o percentual do dia da semana no perfil de eventos (no feriado, o de "Feriado").
+  Sem banco de horas, extras e descontos vão para a folha (Totais), com **um evento por percentual** (`he_50`, `he_100`…,
+  criados sozinhos a partir dos perfis); com banco, o saldo vai para o banco hora por hora.
 - **Arquivo da folha:** faltas e atrasos só vão para o arquivo em jornadas sem banco de horas (com banco, o débito já está no saldo).
   O débito do dia é repartido entre "atrasos e saídas antecipadas" e "horas não trabalhadas", sem ser descontado duas vezes.
   A tela de Totais continua mostrando todos os atrasos e faltas do período.
@@ -132,6 +145,6 @@ src/
   components/layout/         MenuSuperior (menu no topo com submenus em cascata; acordeão no celular), AppLayout
   components/ui/             Badge, Button, ContextMenu, EmptyState, Field, Modal, Toast
   components/dashboard/      KPIs, gráfico de banco de horas, faltas e atrasos, ranking, registros do dia, painel pessoal
-  components/                colaboradores, jornadas, meuponto, relatorios, tratamento, usuarios
+  components/                colaboradores, jornadas, perfis, meuponto, relatorios, tratamento, usuarios
   pages/                     uma tela por item do menu (lib/navigation.ts), Login e Status
 ```

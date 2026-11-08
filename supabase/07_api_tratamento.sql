@@ -210,7 +210,7 @@ begin
     -- Jornada de cada colaborador em cada dia do período
     dia as (
       select c.id as colaborador_id, g::date as data, jd.*, j.nome as jornada,
-             j.tolerancia_entrada_min as tol_e, j.tolerancia_saida_min as tol_s,
+             pe.tolerancia_entrada_min as tol_e, pe.tolerancia_saida_min as tol_s,
              (f.id is not null) as feriado, a.tipo as ausencia,
              case when jd.folga then null else fn_horario_texto(jd.jornada_id, g::date) end as horario_previsto,
              -- Observação do dia: ausência registrada (férias, afastamento…) ou feriado
@@ -228,6 +228,7 @@ begin
                                   least(p_fim, coalesce(c.data_desligamento, p_fim)), interval '1 day') g
         left join lateral fn_jornada_dia(c.id, g::date) jd on true
         left join jornadas j on j.id = jd.jornada_id
+        left join perfis_eventos pe on pe.id = c.perfil_evento_id
         left join feriados f on f.data = g::date
         left join lateral (
           select au.tipo

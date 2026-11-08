@@ -166,15 +166,8 @@ create table if not exists jornadas (
   id                       uuid primary key default gen_random_uuid(),
   nome                     text not null unique,
   descricao                text,
-  -- Tolerâncias (CLT art. 58 §1º: até 5 min por marcação, máx. 10 min/dia)
-  tolerancia_entrada_min   smallint not null default 5  check (tolerancia_entrada_min >= 0),
-  tolerancia_saida_min     smallint not null default 5  check (tolerancia_saida_min >= 0),
-  tolerancia_diaria_min    smallint not null default 10 check (tolerancia_diaria_min >= 0),
-  -- Regras de horas extras
-  percentual_he_dia_util   numeric(5,2) not null default 50,
-  percentual_he_domingo    numeric(5,2) not null default 100,
-  limite_he_diario_min     smallint not null default 120,
-  usa_banco_horas          boolean not null default true,
+  -- Só horários e escala. Tolerâncias, horas extras, adicional noturno e banco de horas
+  -- ficam no perfil de eventos do colaborador (tabela perfis_eventos).
   ativo                    boolean not null default true,
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now()
@@ -560,9 +553,17 @@ begin
     end if;
   end if;
 
+  if to_jsonb(new) ? 'perfil_evento_id' and v_old -> 'perfil_evento_id' is distinct from v_new -> 'perfil_evento_id' then
+    insert into colaborador_historico (colaborador_id, tipo, descricao, dados_anteriores, dados_novos, usuario_id, data_vigencia)
+    values (new.id, 'perfil_evento', 'Mudança de perfil de eventos',
+            jsonb_build_object('perfil', (select nome from perfis_eventos where id = (v_old ->> 'perfil_evento_id')::uuid)),
+            jsonb_build_object('perfil', (select nome from perfis_eventos where id = (v_new ->> 'perfil_evento_id')::uuid)),
+            v_usuario, v_vigencia);
+  end if;
+
   -- Demais campos cadastrais
-  v_diff_new := v_diff_new - 'situacao' - 'cargo_id' - 'departamento_id' - 'jornada_id';
-  v_diff_old := v_diff_old - 'situacao' - 'cargo_id' - 'departamento_id' - 'jornada_id';
+  v_diff_new := v_diff_new - 'situacao' - 'cargo_id' - 'departamento_id' - 'jornada_id' - 'perfil_evento_id';
+  v_diff_old := v_diff_old - 'situacao' - 'cargo_id' - 'departamento_id' - 'jornada_id' - 'perfil_evento_id';
   if v_diff_new <> '{}'::jsonb then
     insert into colaborador_historico (colaborador_id, tipo, descricao, dados_anteriores, dados_novos, usuario_id, data_vigencia)
     values (new.id, 'cadastro', 'Dados cadastrais atualizados', v_diff_old, v_diff_new, v_usuario, v_vigencia);
@@ -576,7 +577,7 @@ create trigger trg_colaboradores_historico after insert or update on colaborador
   for each row execute function fn_colaborador_historico();
 
 -- -----------------------------------------------------------------------------
--- Escalas, adicional noturno e regras de apuração (padrão Fortes Ponto)
+-- Escalas (padrão Fortes Ponto)
 --   tipo = 'semanal' → jornada_dias.dia_semana é o dia da semana (0 = domingo)
 --   tipo = 'escala'  → jornada_dias.dia_semana é o dia do ciclo (0 … ciclo_dias-1),
 --                      contado a partir de data_base (ex.: 12x36 = ciclo de 2 dias)
@@ -584,10 +585,6 @@ create trigger trg_colaboradores_historico after insert or update on colaborador
 alter table jornadas add column if not exists tipo                   text not null default 'semanal';
 alter table jornadas add column if not exists ciclo_dias             smallint;
 alter table jornadas add column if not exists data_base              date;
-alter table jornadas add column if not exists noturno_inicio         time not null default '22:00';
-alter table jornadas add column if not exists noturno_fim            time not null default '05:00';
-alter table jornadas add column if not exists percentual_noturno     numeric(5,2) not null default 20;
-alter table jornadas add column if not exists hora_noturna_reduzida  boolean not null default true;
 
 alter table jornadas drop constraint if exists jornadas_tipo_check;
 alter table jornadas add constraint jornadas_tipo_check check (
@@ -664,6 +661,149 @@ create table if not exists eventos_folha (
 );
 
 -- -----------------------------------------------------------------------------
+-- Perfil de eventos (padrão Fortes Ponto): regras de cálculo do ponto, separadas da jornada.
+--   • tolerâncias de entrada, de saída e geral do dia;
+--   • percentual de hora extra por dia (0 = domingo … 6 = sábado, 7 = feriado);
+--   • limite diário de horas extras, adicional noturno e uso do banco de horas.
+-- Cada colaborador tem um perfil; o perfil marcado como padrão vale para quem não informar outro.
+-- Cada percentual de HE vira um evento da folha (eventos_folha.chave = 'he_<percentual>').
+-- -----------------------------------------------------------------------------
+create table if not exists perfis_eventos (
+  id                      uuid primary key default gen_random_uuid(),
+  nome                    text not null unique,
+  descricao               text,
+  padrao                  boolean not null default false,
+  -- CLT art. 58 §1º: até 5 min por marcação, máx. 10 min/dia
+  tolerancia_entrada_min  smallint not null default 5  check (tolerancia_entrada_min >= 0),
+  tolerancia_saida_min    smallint not null default 5  check (tolerancia_saida_min >= 0),
+  tolerancia_diaria_min   smallint not null default 10 check (tolerancia_diaria_min >= 0),
+  limite_he_diario_min    smallint not null default 120 check (limite_he_diario_min >= 0),
+  usa_banco_horas         boolean not null default true,
+  noturno_inicio          time not null default '22:00',
+  noturno_fim             time not null default '05:00',
+  percentual_noturno      numeric(5,2) not null default 20 check (percentual_noturno >= 0),
+  hora_noturna_reduzida   boolean not null default true,
+  ativo                   boolean not null default true,
+  created_at              timestamptz not null default now(),
+  updated_at              timestamptz not null default now()
+);
+create unique index if not exists ux_perfis_eventos_padrao on perfis_eventos (padrao) where padrao;
+
+create table if not exists perfil_evento_he (
+  perfil_id   uuid not null references perfis_eventos(id) on delete cascade,
+  dia         smallint not null check (dia between 0 and 7),   -- 0 = domingo … 6 = sábado, 7 = feriado
+  percentual  numeric(5,2) not null check (percentual >= 0),
+  primary key (perfil_id, dia)
+);
+
+drop trigger if exists trg_perfis_eventos_updated on perfis_eventos;
+create trigger trg_perfis_eventos_updated before update on perfis_eventos
+  for each row execute function fn_set_updated_at();
+
+alter table colaboradores add column if not exists perfil_evento_id uuid references perfis_eventos(id);
+
+-- Migração: as regras que ficavam na jornada viram perfis (um por combinação de regras).
+-- O perfil das jornadas com mais colaboradores vira o "Padrão". Cada colaborador recebe o perfil
+-- da jornada atual. Os códigos dos eventos "HE dia útil" e "HE folga/feriado" passam para os
+-- eventos dos percentuais correspondentes. Roda uma vez: depois as colunas saem da jornada.
+do $$
+declare
+  r          record;
+  v_id       uuid;
+  v_primeiro boolean := true;
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'jornadas' and column_name = 'tolerancia_entrada_min') then
+    alter table colaboradores disable trigger trg_colaboradores_historico;
+
+    for r in
+      select j.tolerancia_entrada_min as tol_e, j.tolerancia_saida_min as tol_s, j.tolerancia_diaria_min as tol_d,
+             j.percentual_he_dia_util as he_util, j.percentual_he_domingo as he_dom, j.limite_he_diario_min as lim,
+             j.usa_banco_horas as bh, j.noturno_inicio as not_ini, j.noturno_fim as not_fim,
+             j.percentual_noturno as not_pct, j.hora_noturna_reduzida as not_red,
+             array_agg(distinct j.id) as ids, min(j.nome) as nome, count(c.id) as qtd
+        from jornadas j
+        left join colaboradores c on c.jornada_id = j.id
+       group by 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+       order by count(c.id) desc, min(j.nome)
+    loop
+      insert into perfis_eventos (nome, padrao, tolerancia_entrada_min, tolerancia_saida_min, tolerancia_diaria_min,
+                                  limite_he_diario_min, usa_banco_horas, noturno_inicio, noturno_fim,
+                                  percentual_noturno, hora_noturna_reduzida)
+      values (case when v_primeiro then 'Padrão' else 'Regras de ' || r.nome end, v_primeiro,
+              r.tol_e, r.tol_s, r.tol_d, r.lim, r.bh, r.not_ini, r.not_fim, r.not_pct, r.not_red)
+      returning id into v_id;
+
+      insert into perfil_evento_he (perfil_id, dia, percentual)
+      select v_id, d, case when d in (0, 7) then r.he_dom else r.he_util end
+        from generate_series(0, 7) d;
+
+      update colaboradores set perfil_evento_id = v_id
+       where jornada_id = any(r.ids) and perfil_evento_id is null;
+      v_primeiro := false;
+    end loop;
+
+    -- Códigos da folha: "HE dia útil" → percentual de segunda a sábado; "HE folga/feriado" → domingo/feriado
+    insert into eventos_folha (chave, descricao, codigo, unidade, ativo, ordem)
+    select distinct on (k.chave) k.chave, k.descricao, e.codigo, 'horas', coalesce(e.ativo, true), k.ordem
+      from (select 'he_' || replace(trim_scale(h.percentual)::text, '.', '_') as chave,
+                   'Horas extras ' || replace(trim_scale(h.percentual)::text, '.', ',') || '%' as descricao,
+                   least(29, 10 + round(h.percentual / 10))::smallint as ordem,
+                   case when h.dia in (0, 7) then 'he_especial' else 'he_util' end as origem,
+                   case when h.dia in (0, 7) then 2 else 1 end as prioridade
+              from perfil_evento_he h) k
+      left join eventos_folha e on e.chave = k.origem
+     order by k.chave, (e.codigo is null), k.prioridade
+    on conflict (chave) do nothing;
+
+    alter table jornadas
+      drop column tolerancia_entrada_min, drop column tolerancia_saida_min, drop column tolerancia_diaria_min,
+      drop column percentual_he_dia_util, drop column percentual_he_domingo, drop column limite_he_diario_min,
+      drop column usa_banco_horas, drop column noturno_inicio, drop column noturno_fim,
+      drop column percentual_noturno, drop column hora_noturna_reduzida;
+
+    alter table colaboradores enable trigger trg_colaboradores_historico;
+  end if;
+
+  -- Sempre existe um perfil padrão, e todo perfil tem os 8 percentuais
+  if not exists (select 1 from perfis_eventos) then
+    insert into perfis_eventos (nome, padrao) values ('Padrão', true);
+  end if;
+  if not exists (select 1 from perfis_eventos where padrao) then
+    update perfis_eventos set padrao = true
+     where id = (select id from perfis_eventos where ativo order by created_at, nome limit 1);
+  end if;
+  insert into perfil_evento_he (perfil_id, dia, percentual)
+  select p.id, d, case when d in (0, 7) then 100 else 50 end
+    from perfis_eventos p cross join generate_series(0, 7) d
+  on conflict (perfil_id, dia) do nothing;
+
+  alter table colaboradores disable trigger trg_colaboradores_historico;
+  update colaboradores set perfil_evento_id = (select id from perfis_eventos where padrao)
+   where perfil_evento_id is null;
+  alter table colaboradores enable trigger trg_colaboradores_historico;
+end $$;
+
+-- Eventos de HE antigos (substituídos por um evento por percentual)
+delete from eventos_folha where chave in ('he_util', 'he_especial');
+
+-- Colaborador cadastrado sem perfil recebe o perfil padrão
+create or replace function fn_colaborador_perfil_padrao()
+returns trigger language plpgsql as $$
+begin
+  if new.perfil_evento_id is null then
+    new.perfil_evento_id := (select id from perfis_eventos where padrao);
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists trg_colaboradores_perfil on colaboradores;
+create trigger trg_colaboradores_perfil before insert or update of perfil_evento_id on colaboradores
+  for each row execute function fn_colaborador_perfil_padrao();
+
+alter table colaboradores alter column perfil_evento_id set not null;
+
+-- -----------------------------------------------------------------------------
 -- Row Level Security
 -- RLS ligado em TODAS as tabelas e nenhuma policy para anon/authenticated:
 -- a chave pública não lê nem grava tabelas diretamente. Todo acesso passa
@@ -691,6 +831,8 @@ alter table banco_horas           enable row level security;
 alter table fechamentos           enable row level security;
 alter table solicitacoes          enable row level security;
 alter table eventos_folha         enable row level security;
+alter table perfis_eventos        enable row level security;
+alter table perfil_evento_he      enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;
