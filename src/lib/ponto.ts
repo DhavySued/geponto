@@ -57,7 +57,8 @@ export const SITUACAO_BATIDA: Record<SituacaoBatida, { label: string; descricao:
   saida_antecipada: { label: 'Saída antecipada', descricao: 'Saída antes do horário previsto, além da tolerância', tone: 'red' },
   apos_previsto: { label: 'Após o previsto', descricao: 'Saída depois do horário previsto, além da tolerância', tone: 'violet' },
   feriado: { label: 'Batida em feriado', descricao: 'Marcação em dia de feriado', tone: 'primary' },
-  folga: { label: 'Batida em folga', descricao: 'Marcação em dia de folga da jornada', tone: 'primary' },
+  folga: { label: 'Batida em dia de folga', descricao: 'Marcação em dia de folga da jornada ou da escala', tone: 'primary' },
+  nao_controlada: { label: 'Batida não controlada', descricao: 'Colaborador sem controle de ponto no dia: a batida fica registrada, mas não entra na apuração', tone: 'slate' },
   ausencia: { label: 'Batida em ausência', descricao: 'Marcação em dia de férias, atestado ou afastamento', tone: 'primary' },
   fora_jornada: { label: 'Fora da jornada', descricao: 'Marcação além dos turnos previstos para o dia', tone: 'slate' },
   sem_jornada: { label: 'Sem jornada', descricao: 'Colaborador sem jornada de trabalho no dia', tone: 'slate' },
@@ -68,6 +69,16 @@ export const SITUACAO_BATIDA: Record<SituacaoBatida, { label: string; descricao:
   dia_ausencia: { label: 'Ausência registrada', descricao: 'Dia de férias, afastamento, atestado ou abono, sem batidas', tone: 'blue' },
   dia_feriado: { label: 'Feriado', descricao: 'Feriado sem batidas', tone: 'slate' },
   pendente: { label: 'Aguardando', descricao: 'Marcação prevista para mais tarde', tone: 'slate' },
+};
+
+/** Aviso ao colaborador quando a batida não é de um dia normal de trabalho */
+export const SITUACAO_DIA_BATIDA: Record<'nao_controlada' | 'feriado' | 'folga', { titulo: string; texto: string }> = {
+  nao_controlada: {
+    titulo: 'Batida não controlada',
+    texto: 'Seu ponto não é controlado pelo sistema: a batida fica registrada, mas não entra na apuração de horas.',
+  },
+  folga: { titulo: 'Batida em dia de folga', texto: 'Hoje é folga na sua jornada: a batida fica registrada como batida em dia de folga.' },
+  feriado: { titulo: 'Batida em feriado', texto: 'Hoje é feriado: a batida fica registrada como batida em feriado.' },
 };
 
 export const ORIGEM_BATIDA: Record<string, string> = {

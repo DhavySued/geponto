@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatData, formatMinutos } from '@/lib/format';
 import { obterLocalizacao } from '@/lib/geo';
-import { ocorrencia, ORIGEM_BATIDA, rotuloMarcacao } from '@/lib/ponto';
+import { ocorrencia, ORIGEM_BATIDA, rotuloMarcacao, SITUACAO_DIA_BATIDA } from '@/lib/ponto';
 import { useHoraOficial } from '@/lib/hooks';
 import { api } from '@/lib/supabase';
 import type { MeuPontoData, RegistroPonto } from '@/lib/types';
@@ -124,6 +124,15 @@ export default function MeuPonto() {
             )}
             {jd?.folga && <span>Hoje é sua folga</span>}
           </div>
+          {dados?.situacao_dia && (
+            <p className="mt-3 flex items-start gap-2 rounded-xl bg-white/10 px-3 py-2 text-xs text-white/80">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-400" />
+              <span>
+                <strong className="font-semibold text-white">{SITUACAO_DIA_BATIDA[dados.situacao_dia].titulo}.</strong>{' '}
+                {SITUACAO_DIA_BATIDA[dados.situacao_dia].texto}
+              </span>
+            </p>
+          )}
 
           <div className="mt-8">
             {dados && !dados.pode_registrar ? (
@@ -169,6 +178,9 @@ export default function MeuPonto() {
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
               <div className="text-emerald-800">
                 <p className="font-semibold">Ponto registrado: {comprovante.tipo.toLowerCase()} às {comprovante.hora}</p>
+                {comprovante.situacao_dia && (
+                  <p className="mt-0.5 text-xs font-medium">{SITUACAO_DIA_BATIDA[comprovante.situacao_dia].titulo}</p>
+                )}
                 <p className="mt-0.5 text-xs text-emerald-700/80">
                   Comprovante · {formatData(comprovante.data, { day: '2-digit', month: '2-digit', year: 'numeric' })} · NSR{' '}
                   {String(comprovante.nsr).padStart(9, '0')}

@@ -204,10 +204,10 @@ begin
          and (p_departamento is null or c.departamento_id = p_departamento)
          and (p_cargo        is null or c.cargo_id = p_cargo)
          and (p_jornada      is null or c.jornada_id = p_jornada)
-         and c.controla_ponto
          and fn_visivel(c.id)
     ),
-    -- Jornada de cada colaborador em cada dia do período
+    -- Jornada de cada colaborador em cada dia do período (só quem tem o ponto controlado;
+    -- as batidas de quem não tem aparecem como "não controladas", sem previsão)
     dia as (
       select c.id as colaborador_id, g::date as data, jd.*, j.nome as jornada,
              -- tolerância por batida, ou a geral do dia quando o perfil usa só ela
@@ -242,6 +242,7 @@ begin
            order by au.abona desc
            limit 1
         ) a on true
+       where c.controla_ponto
     ),
     -- Marcações previstas do dia (E1, S1, E2, S2), com o instante local previsto
     prev as (
@@ -260,6 +261,7 @@ begin
       select b.*, (b.data_hora at time zone v_tz) as local
         from fn_batidas_periodo(p_ini, p_fim, p_colaborador) b
        where b.colaborador_id in (select id from colab)
+         and b.status = 'valida'   -- desconsideradas não aparecem na consulta (ficam no Tratamento de Batidas)
     ),
     linhas as (
       -- Batidas
@@ -274,13 +276,19 @@ begin
                'obs_dia', d.obs_dia,
                'situacao',
                  case when b.status <> 'valida'  then 'desconsiderada'
+                      -- Sem controle de ponto (ou antes do início do controle): registrada, mas não apurada
+                      when not c.controla_ponto
+                        or b.data_referencia < greatest(c.data_admissao, coalesce(c.controle_ponto_inicio, c.data_admissao))
+                        then 'nao_controlada'
+                      -- Feriado e folga aparecem sempre (mesmo com o turno aberto ou incompleto)
+                      when d.jornada_id is not null and d.feriado then 'feriado'
+                      when d.jornada_id is not null and d.ausencia is null
+                           and (coalesce(d.folga, true) or d.entrada is null) then 'folga'
                       -- Turno só existe com entrada e saída: batida sem o par não é apurada
                       when not par.tem and b.sentido = 'E' and b.data_referencia >= fn_hoje() then 'turno_aberto'
                       when not par.tem           then 'turno_incompleto'
                       when d.jornada_id is null  then 'sem_jornada'
-                      when d.feriado             then 'feriado'
                       when d.ausencia is not null then 'ausencia'
-                      when coalesce(d.folga, true) or d.entrada is null then 'folga'
                       when p.hora is null        then 'fora_jornada'
                       when p.dif = 0             then 'precisa'
                       when b.sentido = 'E' and p.dif >  d.tol_e then 'atraso'

@@ -328,6 +328,7 @@ export interface MeuPontoData {
   };
   pode_registrar: boolean;
   motivo: string | null;
+  situacao_dia?: SituacaoDiaBatida;
   hoje: {
     data: string;
     previsto_min: number;
@@ -354,8 +355,12 @@ export interface MeuPontoData {
   }[];
 }
 
+/** Como a batida fica no dia: sem controle de ponto, em feriado, em folga ou null (dia normal) */
+export type SituacaoDiaBatida = 'nao_controlada' | 'feriado' | 'folga' | null;
+
 export interface RegistroPonto extends GeoBatida {
   ok: boolean;
+  situacao_dia?: SituacaoDiaBatida;
   data: string;
   hora: string;
   nsr: number;
@@ -546,6 +551,7 @@ export type SituacaoBatida =
   | 'apos_previsto'
   | 'feriado'
   | 'folga'
+  | 'nao_controlada'
   | 'ausencia'
   | 'fora_jornada'
   | 'sem_jornada'

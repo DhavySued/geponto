@@ -4,16 +4,28 @@
 -- e Banco de Horas. Execute depois de 05_api_cadastros.sql. Pode ser reexecutado.
 -- =============================================================================
 
--- Motivo que impede o colaborador de registrar ponto (null = pode registrar)
+-- Motivo que impede o colaborador de registrar ponto (null = pode registrar).
+-- Folga, feriado e falta de controle de ponto NÃO impedem: a batida é registrada e classificada
+-- (fn_situacao_dia_batida) como "em dia de folga", "em feriado" ou "não controlada".
 create or replace function fn_motivo_bloqueio_ponto(c colaboradores)
 returns text language sql stable set search_path = public as $$
   select case
-    when not c.controla_ponto        then 'Seu ponto não é controlado pelo sistema. Fale com o RH.'
     when c.situacao = 'desligado'    then 'Colaborador desligado.'
     when c.situacao = 'ferias'       then 'Você está de férias. Bom descanso!'
     when c.situacao = 'afastado'     then 'Você está afastado. Fale com o RH se precisar registrar o ponto.'
-    when fn_inicio_controle(c) > fn_hoje()
-      then 'O controle do seu ponto começa em ' || to_char(fn_inicio_controle(c), 'DD/MM/YYYY') || '.'
+  end;
+$$;
+
+-- Como fica a batida no dia: 'nao_controlada' (colaborador sem controle de ponto, ou antes do início
+-- do controle — não entra na apuração), 'feriado', 'folga' ou null (dia normal de trabalho)
+create or replace function fn_situacao_dia_batida(c colaboradores, p_data date)
+returns text language sql stable set search_path = public as $$
+  select case
+    when not c.controla_ponto or fn_inicio_controle(c) > p_data then 'nao_controlada'
+    when exists (select 1 from feriados f where f.data = p_data)
+         and not exists (select 1 from escalas e where e.colaborador_id = c.id and e.data = p_data and e.tipo = 'trabalho')
+      then 'feriado'
+    when (select jd.folga from fn_jornada_dia(c.id, p_data) jd) then 'folga'
   end;
 $$;
 
@@ -108,6 +120,7 @@ begin
       'departamento', (select nome from departamentos where id = c.departamento_id),
       'jornada', (select nome from jornadas where id = v_jornada),
       'controle_ponto_inicio', fn_inicio_controle(c)),
+    'situacao_dia', fn_situacao_dia_batida(c, v_hoje),
     'pode_registrar', fn_motivo_bloqueio_ponto(c) is null,
     'motivo', fn_motivo_bloqueio_ponto(c),
     'hoje', jsonb_build_object(
@@ -217,7 +230,8 @@ begin
     'sequencia', v_seq,
     'tipo', v_tipo,
     'colaborador', c.nome,
-    'matricula', c.matricula) || fn_batida_geo_json(v_bat.id);
+    'matricula', c.matricula,
+    'situacao_dia', fn_situacao_dia_batida(c, v_bat.data_referencia)) || fn_batida_geo_json(v_bat.id);
 end $$;
 
 drop function if exists api_registrar_ponto(text);
@@ -764,6 +778,7 @@ end $$;
 -- Permissões
 -- -----------------------------------------------------------------------------
 revoke execute on function fn_motivo_bloqueio_ponto(colaboradores)      from public, anon, authenticated;
+revoke execute on function fn_situacao_dia_batida(colaboradores, date)  from public, anon, authenticated;
 revoke execute on function fn_batidas_json(uuid, date)                  from public, anon, authenticated;
 revoke execute on function fn_batida_geo_json(uuid)                     from public, anon, authenticated;
 revoke execute on function fn_distancia_m(numeric, numeric, numeric, numeric) from public, anon, authenticated;

@@ -6,6 +6,7 @@ import { AvisoGeo } from '@/components/ponto/Geo';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData } from '@/lib/format';
+import { SITUACAO_DIA_BATIDA } from '@/lib/ponto';
 import { obterLocalizacao } from '@/lib/geo';
 import { useHoraOficial } from '@/lib/hooks';
 import { supabase } from '@/lib/supabase';
@@ -185,6 +186,9 @@ export default function Login() {
                     {comprovante.tipo} registrada às {comprovante.hora}
                   </p>
                   <p className="mt-0.5">{comprovante.colaborador} · mat. {comprovante.matricula}</p>
+                  {comprovante.situacao_dia && (
+                    <p className="mt-0.5 text-xs font-medium">{SITUACAO_DIA_BATIDA[comprovante.situacao_dia].titulo}</p>
+                  )}
                   <p className="mt-1 text-xs text-emerald-700/80">
                     Comprovante · {formatData(comprovante.data, { day: '2-digit', month: '2-digit', year: 'numeric' })} · NSR{' '}
                     {String(comprovante.nsr).padStart(9, '0')}
