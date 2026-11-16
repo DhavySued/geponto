@@ -501,7 +501,12 @@ returns table (
   banco_horas           boolean,   -- o saldo do dia vai para o banco de horas (senão: HE/desconto)
   feriado               boolean,   -- feriado valendo para o colaborador (escala de trabalho no dia anula)
   fechado               boolean,   -- dia dentro de um período fechado
-  escala                text       -- escala do dia: 'trabalho', 'folga' ou null (segue a jornada)
+  escala                text,      -- escala do dia: 'trabalho', 'folga' ou null (segue a jornada)
+  -- Antes das justificativas que abonam (atraso_min / saida_antecipada_min já vêm sem os minutos abonados)
+  atraso_bruto_min            integer,
+  saida_antecipada_bruta_min  integer,
+  falta_bruta                 boolean,   -- dia previsto, encerrado e sem batidas (antes de qualquer abono)
+  abono_justificativa_min     integer    -- minutos abonados por justificativas (atraso, saída e falta)
 )
 language sql stable set search_path = public as $$
 with cfg as (
@@ -543,7 +548,11 @@ base as (
          (f.id is not null and e.tipo is distinct from 'trabalho') as feriado,
          a.tipo as ausencia_tipo,
          coalesce(a.abona, false) as abona,
-         coalesce(ap.minutos, 0) as abono_parcial
+         coalesce(ap.minutos, 0) as abono_parcial,
+         -- Justificativas que abonam (minutos null = abona tudo)
+         ja.id is not null as ja_abona, ja.minutos as ja_min,
+         js.id is not null as js_abona, js.minutos as js_min,
+         jf.id is not null as jf_abona, jf.minutos as jf_min
     from dias dd
     left join jornadas j      on j.id = dd.jornada_id
     left join jornada_dias jd on jd.jornada_id = dd.jornada_id
@@ -572,6 +581,12 @@ base as (
          and dd.data between au.data_inicio and au.data_fim
          and au.minutos is not null and au.abona
     ) ap on true
+    left join justificativas ja on ja.colaborador_id = dd.colaborador_id and ja.data = dd.data
+                               and ja.tipo = 'atraso' and ja.abona
+    left join justificativas js on js.colaborador_id = dd.colaborador_id and js.data = dd.data
+                               and js.tipo = 'saida_antecipada' and js.abona
+    left join justificativas jf on jf.colaborador_id = dd.colaborador_id and jf.data = dd.data
+                               and jf.tipo = 'falta' and jf.abona
 ),
 -- Sentido efetivo de cada batida (fn_batidas_periodo: declarado pelo RH ou sequência automática).
 -- Inclui o dia anterior ao período para calcular a interjornada do primeiro dia.
@@ -679,21 +694,39 @@ calc as (
     left join marc_inter m  on m.colaborador_id = bs.colaborador_id and m.data = bs.data
     left join marc_pares mp on mp.colaborador_id = bs.colaborador_id and mp.data = bs.data
 ),
-res as (
+res0 as (
   select c.*,
-         least(c.abono_parcial, greatest(c.previsto - c.trabalhado, 0)) as abonado,
+         (c.previsto > 0 and c.qtd = 0 and not c.em_andamento) as falta_bruta,
          case when c.previsto > 0 and c.primeira_turno is not null
                    and extract(epoch from c.primeira_turno - c.entrada_turno) / 60 > c.tolerancia_entrada_min
               then (extract(epoch from c.primeira_turno - c.entrada_turno) / 60)::int
-              else 0 end as atraso,
+              else 0 end as atraso_bruto,
          case when c.previsto > 0 and c.qtd > 0 and c.qtd = 2 * c.pares and not c.em_andamento
                    and extract(epoch from (c.data + c.saida + case when c.saida <= c.entrada then interval '1 day'
                                                                     else interval '0' end) - c.ultima) / 60
                        > c.tolerancia_saida_min
               then (extract(epoch from (c.data + c.saida + case when c.saida <= c.entrada then interval '1 day'
                                                                 else interval '0' end) - c.ultima) / 60)::int
-              else 0 end as antecipada
+              else 0 end as antecipada_bruta
     from calc c
+),
+-- Justificativa que abona: tira os minutos do atraso/saída antecipada e cobre o débito do dia
+res1 as (
+  select r.*,
+         case when r.ja_abona then least(coalesce(r.ja_min, r.atraso_bruto), r.atraso_bruto) else 0 end as abono_atraso,
+         case when r.js_abona then least(coalesce(r.js_min, r.antecipada_bruta), r.antecipada_bruta) else 0 end
+           as abono_antecipada,
+         case when r.jf_abona and r.falta_bruta then least(coalesce(r.jf_min, r.previsto), r.previsto) else 0 end
+           as abono_falta
+    from res0 r
+),
+res as (
+  select r.*,
+         least(r.abono_parcial + r.abono_atraso + r.abono_antecipada + r.abono_falta,
+               greatest(r.previsto - r.trabalhado, 0)) as abonado,
+         r.atraso_bruto - r.abono_atraso as atraso,
+         r.antecipada_bruta - r.abono_antecipada as antecipada
+    from res1 r
 ),
 fin as (
   select r.*,
@@ -719,10 +752,13 @@ select f.colaborador_id,
             when coalesce(f.folga, true) and f.qtd = 0 then 'folga'
             when f.em_andamento                then 'em_andamento'
             when f.e_falta                     then 'falta'
+            when f.abono_falta > 0             then 'falta_abonada'
             when f.qtd <> 2 * f.pares          then 'inconsistente'
             when f.atraso > 0                  then 'atraso'
             when f.antecipada > 0              then 'saida_antecipada'
             when f.saldo > 0                   then 'hora_extra'
+            when f.abono_atraso > 0            then 'atraso_abonado'
+            when f.abono_antecipada > 0        then 'saida_antecipada_abonada'
             else 'normal' end,
        f.jornada_id,
        f.qtd <> 2 * f.pares,
@@ -739,7 +775,11 @@ select f.colaborador_id,
        f.usa_bh,
        f.feriado,
        f.fechado,
-       f.escala
+       f.escala,
+       f.atraso_bruto,
+       f.antecipada_bruta,
+       f.falta_bruta,
+       f.abono_atraso + f.abono_antecipada + f.abono_falta
   from fin f;
 $$;
 
@@ -864,6 +904,11 @@ drop trigger if exists trg_escalas_reprocessar on escalas;
 create trigger trg_escalas_reprocessar after insert or update or delete on escalas
   for each row execute function fn_escalas_reprocessar();
 
+-- Justificativa lançada/alterada/removida → recalcula o dia (mesma regra da escala)
+drop trigger if exists trg_justificativas_reprocessar on justificativas;
+create trigger trg_justificativas_reprocessar after insert or update or delete on justificativas
+  for each row execute function fn_escalas_reprocessar();
+
 -- -----------------------------------------------------------------------------
 -- Fechamento de período: bloqueia alterações no ponto de dias fechados
 -- (vale para qualquer caminho de escrita, não só para a API). A exclusão em cascata
@@ -902,11 +947,12 @@ begin
        or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
       raise exception 'O dia % está em um período fechado.', to_char(coalesce(new.data, old.data), 'DD/MM/YYYY');
     end if;
-  elsif tg_table_name = 'escalas' then
+  elsif tg_table_name in ('escalas', 'justificativas') then
     if tg_op <> 'INSERT' and fn_periodo_fechado(old.data)
        or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
-      raise exception 'O dia % está em um período fechado. Reabra o período para alterar a escala.',
-        to_char(coalesce(new.data, old.data), 'DD/MM/YYYY');
+      raise exception 'O dia % está em um período fechado. Reabra o período para alterar %.',
+        to_char(coalesce(new.data, old.data), 'DD/MM/YYYY'),
+        case tg_table_name when 'escalas' then 'a escala' else 'a justificativa' end;
     end if;
   end if;
   return coalesce(new, old);
@@ -922,6 +968,10 @@ create trigger trg_ausencias_fechamento before insert or update or delete on aus
 
 drop trigger if exists trg_escalas_fechamento on escalas;
 create trigger trg_escalas_fechamento before insert or update or delete on escalas
+  for each row execute function fn_bloquear_periodo_fechado();
+
+drop trigger if exists trg_justificativas_fechamento on justificativas;
+create trigger trg_justificativas_fechamento before insert or update or delete on justificativas
   for each row execute function fn_bloquear_periodo_fechado();
 
 drop trigger if exists trg_banco_horas_fechamento on banco_horas;

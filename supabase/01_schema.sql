@@ -886,6 +886,32 @@ create trigger trg_colaboradores_perfil before insert or update of perfil_evento
 alter table colaboradores alter column perfil_evento_id set not null;
 
 -- -----------------------------------------------------------------------------
+-- Justificativas de atraso, saída antecipada e falta (uma por colaborador, dia e tipo)
+--   abona = false → fica registrado o motivo, mas o atraso/saída/falta continua contando
+--   abona = true  → os minutos deixam de ser atraso/débito; minutos null abona tudo,
+--                   minutos preenchido abona só essa quantidade (abono parcial)
+-- -----------------------------------------------------------------------------
+create table if not exists justificativas (
+  id              uuid primary key default gen_random_uuid(),
+  colaborador_id  uuid not null references colaboradores(id) on delete cascade,
+  data            date not null,
+  tipo            text not null check (tipo in ('atraso', 'saida_antecipada', 'falta')),
+  motivo          text not null check (length(trim(motivo)) > 0),
+  abona           boolean not null default false,
+  minutos         integer check (minutos is null or minutos > 0),
+  observacao      text,
+  usuario_id      uuid references usuarios(id) on delete set null,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  unique (colaborador_id, data, tipo)
+);
+create index if not exists ix_justificativas_data on justificativas (data);
+
+drop trigger if exists trg_justificativas_updated on justificativas;
+create trigger trg_justificativas_updated before update on justificativas
+  for each row execute function fn_set_updated_at();
+
+-- -----------------------------------------------------------------------------
 -- Row Level Security
 -- RLS ligado em TODAS as tabelas e nenhuma policy para anon/authenticated:
 -- a chave pública não lê nem grava tabelas diretamente. Todo acesso passa
@@ -917,6 +943,7 @@ alter table eventos_folha         enable row level security;
 alter table perfis_eventos        enable row level security;
 alter table perfil_evento_he      enable row level security;
 alter table escalas               enable row level security;
+alter table justificativas        enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;

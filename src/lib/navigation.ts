@@ -13,6 +13,7 @@ import {
   Fingerprint,
   Hourglass,
   LayoutDashboard,
+  MessageSquareText,
   Lock,
   MapPin,
   PenLine,
@@ -149,6 +150,13 @@ export const NAVEGACAO: NavGroup[] = [
         descricao: 'Atestados, férias, afastamentos, folgas e abonos — individual ou em lote',
         path: '/movimentos/ocorrencias',
         icon: Stethoscope,
+      },
+      {
+        chave: 'justificativas',
+        titulo: 'Justificativas',
+        descricao: 'Justifica ou abona atrasos, saídas antecipadas e faltas',
+        path: '/movimentos/justificativas',
+        icon: MessageSquareText,
       },
       {
         chave: 'banco_horas',

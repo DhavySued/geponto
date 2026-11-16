@@ -15,6 +15,7 @@ export type PaginaChave =
   | 'feriados'
   | 'locais_ponto'
   | 'ocorrencias'
+  | 'justificativas'
   | 'solicitacoes'
   | 'fechamento'
   | 'totais_periodo'
@@ -1007,4 +1008,42 @@ export interface EscalasGrade {
   feriados: { data: string; descricao: string }[];
   fechado_ate: string | null;
   colaboradores: EscalaColaborador[];
+}
+
+/** Justificativas de atraso, saída antecipada e falta */
+export type TipoJustificativa = 'atraso' | 'saida_antecipada' | 'falta';
+
+export interface Justificativa {
+  id: string;
+  motivo: string;
+  abona: boolean;
+  /** null = abona todo o tempo */
+  minutos: number | null;
+  observacao: string | null;
+  usuario: string | null;
+  atualizado_em: string;
+  /** Minutos efetivamente abonados (0 quando só justifica) */
+  minutos_abonados: number;
+}
+
+export interface JustificativaItem {
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
+  departamento: string | null;
+  data: string;
+  tipo: TipoJustificativa;
+  /** Atraso/saída em minutos; na falta, a jornada prevista do dia */
+  minutos: number;
+  /** Primeira batida do dia (atraso) */
+  hora: string | null;
+  /** false: a justificativa existe, mas o evento não aparece mais na apuração (batida corrigida) */
+  ocorreu: boolean;
+  fechado: boolean;
+  justificativa: Justificativa | null;
+}
+
+export interface JustificativasLista {
+  itens: JustificativaItem[];
+  motivos: string[];
 }

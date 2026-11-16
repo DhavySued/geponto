@@ -38,7 +38,7 @@ drop function if exists fn_gestor_escopo(uuid);
 create or replace function api_filtros_auxiliares(p_token text)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
-  v_usuario uuid := fn_auth_alguma(p_token, array['ocorrencias', 'solicitacoes', 'fechamento', 'espelho_ponto',
+  v_usuario uuid := fn_auth_alguma(p_token, array['ocorrencias', 'justificativas', 'solicitacoes', 'fechamento', 'espelho_ponto',
                                                    'totais_periodo', 'quebra_regras', 'feriados', 'escalas']);
 begin
   return jsonb_build_object(

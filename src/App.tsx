@@ -15,6 +15,7 @@ import EspelhoPonto from '@/pages/EspelhoPonto';
 import Fechamento from '@/pages/Fechamento';
 import Feriados from '@/pages/Feriados';
 import Jornadas from '@/pages/Jornadas';
+import Justificativas from '@/pages/Justificativas';
 import LocaisPonto from '@/pages/LocaisPonto';
 import Login from '@/pages/Login';
 import MeuPonto from '@/pages/MeuPonto';
@@ -65,6 +66,7 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   feriados: Feriados,
   locais_ponto: LocaisPonto,
   ocorrencias: Ocorrencias,
+  justificativas: Justificativas,
   fechamento: Fechamento,
   espelho_ponto: EspelhoPonto,
   totais_periodo: TotaisPeriodo,
