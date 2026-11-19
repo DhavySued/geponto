@@ -244,10 +244,13 @@ begin
         ) a on true
        where c.controla_ponto
     ),
-    -- Marcações previstas do dia (E1, S1, E2, S2), com o instante local previsto
+    -- Marcações previstas do dia (E1, S1, E2, S2), com o instante local previsto.
+    -- Intervalo flexível: S1 e E2 não têm horário fixo (flex) e só ficam "não registradas" depois da saída prevista.
     prev as (
       select d.colaborador_id, d.data, m.sentido, m.turno, m.hora,
-             d.data + m.hora + case when m.hora < d.entrada then interval '1 day' else interval '0' end as ts
+             d.data + m.hora + case when m.hora < d.entrada then interval '1 day' else interval '0' end as ts,
+             (d.intervalo_flexivel and (m.sentido, m.turno) in (('S', 1), ('E', 2))) as flex,
+             d.data + d.saida + case when d.saida <= d.entrada then interval '1 day' else interval '0' end as ts_saida
         from dia d
        cross join lateral (values
          ('E', 1, d.entrada),
@@ -270,7 +273,7 @@ begin
                'tipo', 'batida',
                'colaborador', c.nome, 'matricula', c.matricula, 'departamento', c.departamento,
                'jornada', d.jornada, 'horario_previsto', d.horario_previsto,
-               'previsto', to_char(p.hora, 'HH24:MI'),
+               'previsto', case when pv.flex and p.hora is null then 'Flexível' else to_char(p.hora, 'HH24:MI') end,
                'diferenca_min', p.dif,
                'ausencia', d.ausencia,
                'obs_dia', d.obs_dia,
@@ -289,6 +292,11 @@ begin
                       when not par.tem           then 'turno_incompleto'
                       when d.jornada_id is null  then 'sem_jornada'
                       when d.ausencia is not null then 'ausencia'
+                      -- Intervalo flexível: a saída vale em qualquer horário; o retorno é comparado com a duração
+                      when pv.flex and b.sentido = 'S' then 'intervalo_flexivel'
+                      when pv.flex and p.hora is null then 'intervalo_flexivel'
+                      when pv.flex and p.dif >  d.tol_e then 'intervalo_excedido'
+                      when pv.flex and p.dif < -d.tol_e then 'intervalo_reduzido'
                       when p.hora is null        then 'fora_jornada'
                       when p.dif = 0             then 'precisa'
                       when b.sentido = 'E' and p.dif >  d.tol_e then 'atraso'
@@ -310,9 +318,20 @@ begin
                             and o.colaborador_id = b.colaborador_id and o.data_referencia = b.data_referencia
                             and o.turno = b.turno and o.sentido <> b.sentido) as tem
         ) par
+        -- Intervalo flexível: retorno previsto = saída real para o intervalo (S1) + a duração do intervalo
+        left join lateral (
+          select min(date_trunc('minute', o.local))
+                 + make_interval(mins => fn_minutos(d.saida_intervalo, d.retorno_intervalo)) as ts
+            from bat o
+           where pv.flex and b.sentido = 'E' and b.turno = 2
+             and o.colaborador_id = b.colaborador_id and o.data_referencia = b.data_referencia
+             and o.sentido = 'S' and o.turno = 1
+        ) rf on true
         -- horário previsto da marcação e a diferença (em minutos) da batida para ele
         cross join lateral (
-          select pv.hora, (extract(epoch from date_trunc('minute', b.local) - pv.ts) / 60)::int as dif
+          select case when pv.flex then rf.ts::time else pv.hora end as hora,
+                 (extract(epoch from date_trunc('minute', b.local)
+                                     - case when pv.flex then rf.ts else pv.ts end) / 60)::int as dif
         ) p
       union all
       -- Marcações previstas sem batida válida correspondente
@@ -324,9 +343,10 @@ begin
                'data', pv.data, 'data_referencia', pv.data,
                'jornada', d.jornada, 'horario_previsto', d.horario_previsto,
                'sentido', pv.sentido, 'turno', pv.turno,
-               'previsto', to_char(pv.hora, 'HH24:MI'),
+               'previsto', case when pv.flex then 'Flexível' else to_char(pv.hora, 'HH24:MI') end,
                'obs_dia', d.obs_dia,
-               'situacao', case when pv.ts > v_agora then 'pendente' else 'nao_registrada' end)
+               'situacao', case when (case when pv.flex then pv.ts_saida else pv.ts end) > v_agora then 'pendente'
+                                else 'nao_registrada' end)
         from prev pv
         join colab c on c.id = pv.colaborador_id
         join dia d   on d.colaborador_id = pv.colaborador_id and d.data = pv.data

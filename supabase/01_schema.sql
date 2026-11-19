@@ -646,6 +646,10 @@ alter table jornadas add column if not exists tipo                   text not nu
 alter table jornadas add column if not exists ciclo_dias             smallint;
 alter table jornadas add column if not exists data_base              date;
 
+-- Intervalo flexível: a saída e o retorno do intervalo não precisam bater nos horários da jornada.
+-- Vale a duração (retorno − saída do intervalo previstos): o retorno esperado é a saída real + a duração.
+alter table jornadas add column if not exists intervalo_flexivel     boolean not null default false;
+
 alter table jornadas drop constraint if exists jornadas_tipo_check;
 alter table jornadas add constraint jornadas_tipo_check check (
   tipo = 'semanal' or (tipo = 'escala' and ciclo_dias between 2 and 60 and data_base is not null));

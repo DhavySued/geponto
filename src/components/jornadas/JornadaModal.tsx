@@ -385,6 +385,17 @@ export function JornadaModal({
           </p>
         </section>
 
+        <Switch
+          ativo={form.intervalo_flexivel}
+          onChange={(v) => set('intervalo_flexivel', v)}
+          label="Intervalo flexível"
+          descricao={
+            form.intervalo_flexivel
+              ? 'O colaborador sai para o intervalo quando quiser: vale a duração (retorno − saída do intervalo acima). O retorno esperado é a saída real + essa duração.'
+              : 'A saída e o retorno do intervalo são comparados com os horários fixos acima.'
+          }
+        />
+
         <div className="grid gap-3 sm:grid-cols-2 sm:items-center">
           <Switch
             ativo={form.ativo}

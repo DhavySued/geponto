@@ -418,11 +418,12 @@ begin
   end loop;
 
   if v_id is null then
-    insert into jornadas (nome, descricao, ativo, tipo, ciclo_dias, data_base)
+    insert into jornadas (nome, descricao, ativo, tipo, ciclo_dias, data_base, intervalo_flexivel)
     values (fn_txt(d, 'nome'), fn_txt(d, 'descricao'),
             coalesce((d ->> 'ativo')::boolean, true),
             v_tipo, case when v_tipo = 'escala' then v_ciclo end,
-            case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end)
+            case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end,
+            coalesce((d ->> 'intervalo_flexivel')::boolean, false))
     returning id into v_id;
   else
     update jornadas set
@@ -430,7 +431,8 @@ begin
       ativo = coalesce((d ->> 'ativo')::boolean, true),
       tipo = v_tipo,
       ciclo_dias = case when v_tipo = 'escala' then v_ciclo end,
-      data_base = case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end
+      data_base = case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end,
+      intervalo_flexivel = coalesce((d ->> 'intervalo_flexivel')::boolean, false)
     where id = v_id;
     if not found then raise exception 'Jornada não encontrada.'; end if;
     delete from jornada_dias where jornada_id = v_id;

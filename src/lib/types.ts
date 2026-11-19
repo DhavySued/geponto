@@ -231,6 +231,8 @@ export interface Jornada {
   ciclo_dias: number | null;
   data_base: string | null;
   ativo: boolean;
+  /** A saída e o retorno do intervalo não precisam bater no horário: vale a duração do intervalo */
+  intervalo_flexivel: boolean;
   colaboradores?: number;
   minutos_semana?: number;
   dias: JornadaDia[];
@@ -342,6 +344,8 @@ export interface MeuPontoData {
       saida_intervalo: string | null;
       retorno_intervalo: string | null;
       saida: string | null;
+      intervalo_flexivel?: boolean;
+      intervalo_min?: number | null;
     } | null;
   };
   saldo_banco_min: number;
@@ -555,6 +559,9 @@ export type SituacaoBatida =
   | 'nao_controlada'
   | 'ausencia'
   | 'fora_jornada'
+  | 'intervalo_flexivel'
+  | 'intervalo_excedido'
+  | 'intervalo_reduzido'
   | 'sem_jornada'
   | 'desconsiderada'
   | 'turno_incompleto'

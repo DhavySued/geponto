@@ -278,7 +278,7 @@ $$;
 drop function if exists fn_jornada_dia(uuid, date);
 create function fn_jornada_dia(p_colaborador uuid, p_data date)
 returns table (jornada_id uuid, folga boolean, entrada time, saida_intervalo time, retorno_intervalo time, saida time,
-               escala text)
+               escala text, intervalo_flexivel boolean)
 language sql stable set search_path = public as $$
   select j.id,
          case when e.id is not null then e.tipo = 'folga' else coalesce(jd.folga, true) end,
@@ -286,7 +286,10 @@ language sql stable set search_path = public as $$
          case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end,
          case when e.id is not null then e.retorno_intervalo else jd.retorno_intervalo end,
          case when e.id is not null then e.saida else jd.saida end,
-         e.tipo
+         e.tipo,
+         -- Intervalo flexível vem da jornada (vale também nos dias de escala, se o dia tiver intervalo)
+         coalesce(j.intervalo_flexivel, false)
+           and (case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end) is not null
     from (select fn_jornada_vigente(p_colaborador, p_data) as id) v
     left join jornadas j      on j.id = v.id
     left join jornada_dias jd on jd.jornada_id = j.id
@@ -295,12 +298,21 @@ language sql stable set search_path = public as $$
    where j.id is not null or e.id is not null;
 $$;
 
+-- 90 → '1h30'
+create or replace function fn_minutos_texto(p_min integer)
+returns text language sql immutable as $$
+  select (p_min / 60) || 'h' || lpad((p_min % 60)::text, 2, '0');
+$$;
+
 -- Horário previsto do colaborador em texto, já com a escala do dia (null = sem previsão)
 create or replace function fn_horario_dia(p_colaborador uuid, p_data date)
 returns text language sql stable set search_path = public as $$
   select case when jd.folga or jd.entrada is null then null
               when jd.saida_intervalo is null
                 then to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
+              when jd.intervalo_flexivel
+                then to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
+                     || ' · intervalo flexível de ' || fn_minutos_texto(fn_minutos(jd.saida_intervalo, jd.retorno_intervalo))
               else to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida_intervalo, 'HH24:MI')
                    || ' · ' || to_char(jd.retorno_intervalo, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
          end
@@ -313,6 +325,9 @@ returns text language sql stable set search_path = public as $$
   select case when jd.folga or jd.entrada is null then null
               when jd.saida_intervalo is null
                 then to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
+              when j.intervalo_flexivel
+                then to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
+                     || ' · intervalo flexível de ' || fn_minutos_texto(fn_minutos(jd.saida_intervalo, jd.retorno_intervalo))
               else to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida_intervalo, 'HH24:MI')
                    || ' · ' || to_char(jd.retorno_intervalo, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
          end
@@ -533,6 +548,9 @@ base as (
          case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end as saida_intervalo,
          case when e.id is not null then e.retorno_intervalo else jd.retorno_intervalo end as retorno_intervalo,
          e.tipo as escala,
+         coalesce(j.intervalo_flexivel, false)
+           and (case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end) is not null
+           as intervalo_flexivel,
          -- Modo de tolerância do perfil: 'batida' usa entrada/saída em cada marcação (a marcação dentro
          -- dela conta como o horário previsto); 'diaria' usa só a geral do dia, sobre o saldo e como
          -- limite para apontar atraso/saída antecipada.
@@ -613,10 +631,17 @@ pares as (
 ),
 -- Tolerância por batida: a marcação dentro da tolerância do horário previsto conta como o próprio
 -- horário previsto (E1 entrada · S1 saída p/ intervalo ou saída · E2 retorno · S2 saída).
+-- Intervalo flexível: a saída para o intervalo (S1) vale como foi batida, e o retorno (E2) previsto é
+-- a saída real + a duração do intervalo — dentro da tolerância de entrada, o intervalo conta como o previsto.
 pares_aj as (
   select p.*,
          case when pv.e is not null and abs(extract(epoch from p.ini - pv.e) / 60) <= bs.tolerancia_entrada_min
-              then pv.e else p.ini end as ini_aj,
+              then pv.e
+              when p.tur = 2 and bs.intervalo_flexivel and bs.tolerancia_modo = 'batida' and p.pausa is not null
+                   and abs(extract(epoch from p.pausa) / 60 - fn_minutos(bs.saida_intervalo, bs.retorno_intervalo))
+                       <= bs.tolerancia_entrada_min
+              then p.ini - p.pausa + make_interval(mins => fn_minutos(bs.saida_intervalo, bs.retorno_intervalo))
+              else p.ini end as ini_aj,
          case when pv.s is not null and abs(extract(epoch from p.fim - pv.s) / 60) <= bs.tolerancia_saida_min
               then pv.s else p.fim end as fim_aj
     from pares p
@@ -625,8 +650,10 @@ pares_aj as (
     left join lateral (
       select (bs.data + h.e + case when h.e < bs.entrada then interval '1 day' else interval '0' end) at time zone cfg.tz as e,
              (bs.data + h.s + case when h.s <= bs.entrada then interval '1 day' else interval '0' end) at time zone cfg.tz as s
-        from (select case p.tur when 1 then bs.entrada when 2 then bs.retorno_intervalo end as e,
-                     case p.tur when 1 then coalesce(bs.saida_intervalo, bs.saida)
+        from (select case p.tur when 1 then bs.entrada
+                                when 2 then case when not bs.intervalo_flexivel then bs.retorno_intervalo end end as e,
+                     case p.tur when 1 then case when bs.intervalo_flexivel then null
+                                                 else coalesce(bs.saida_intervalo, bs.saida) end
                                 when 2 then case when bs.saida_intervalo is not null then bs.saida end end as s) h
        where bs.tolerancia_modo = 'batida' and not coalesce(bs.folga, true) and not bs.feriado
          and bs.entrada is not null

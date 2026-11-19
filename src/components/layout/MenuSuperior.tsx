@@ -49,18 +49,15 @@ function LinkItem({ item, onNavegar }: { item: NavItem; onNavegar: () => void })
       onClick={onNavegar}
       className={({ isActive }) =>
         clsx(
-          'flex items-start gap-3 rounded-xl px-3 py-2.5 transition',
+          'flex items-center gap-3 rounded-xl px-3 py-2.5 transition',
           isActive ? 'bg-primary-50 text-primary-700' : 'text-slate-700 hover:bg-slate-50',
         )
       }
     >
       {({ isActive }) => (
         <>
-          <item.icon className={clsx('mt-0.5 h-[18px] w-[18px] shrink-0', isActive ? 'text-accent-500' : 'text-slate-400')} strokeWidth={1.9} />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium">{item.titulo}</span>
-            <span className="block text-xs leading-snug text-slate-400">{item.descricao}</span>
-          </span>
+          <item.icon className={clsx('h-[18px] w-[18px] shrink-0', isActive ? 'text-accent-500' : 'text-slate-400')} strokeWidth={1.9} />
+          <span className="min-w-0 text-sm font-medium">{item.titulo}</span>
         </>
       )}
     </NavLink>
@@ -127,7 +124,7 @@ function GrupoMenu({
       {aberto && (
         // pt-2 mantém o hover entre o botão e o painel
         <div className="absolute left-0 top-full z-50 pt-2">
-          <div className="w-80 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-slate-200/70">
+          <div className="w-72 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-slate-200/70">
             {lista.map((e) =>
               e.tipo === 'item' ? (
                 <div key={e.item.chave} onMouseEnter={() => setSub(null)}>
@@ -143,7 +140,7 @@ function GrupoMenu({
                   />
                   {sub === e.nome && (
                     <div className="absolute left-full top-0 z-50 pl-2">
-                      <div className="w-80 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-slate-200/70">
+                      <div className="w-72 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-slate-200/70">
                         {e.itens.map((i) => (
                           <LinkItem key={i.chave} item={i} onNavegar={onFechar} />
                         ))}

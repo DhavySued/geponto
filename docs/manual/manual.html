@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Manual do GePonto</title>
+<style>
+  @page { size: A4; margin: 18mm 17mm 20mm 17mm; }
+  @page :first { margin: 0; }
+  :root {
+    --azul: #00236a; --azul-2: #24438f; --azul-claro: #eef2fb;
+    --laranja: #f39200; --laranja-claro: #fff6e6; --laranja-escuro: #a65f00;
+    --texto: #1e293b; --suave: #64748b; --linha: #e2e8f0; --verde: #047857; --verde-claro: #ecfdf5;
+    --vermelho: #be123c; --vermelho-claro: #fff1f2;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif; color: var(--texto);
+         font-size: 10.2pt; line-height: 1.5; background: #fff; }
+  h1, h2, h3, h4 { color: var(--azul); line-height: 1.25; margin: 0; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 8pt; padding-left: 16pt; }
+  li { margin-bottom: 3pt; }
+  strong { color: #0f172a; }
+  code, .tecla { font-family: Consolas, "Cascadia Mono", monospace; font-size: 9pt; background: #f1f5f9;
+                 border: 1px solid var(--linha); border-radius: 3pt; padding: 0 3pt; }
+
+  /* Capa */
+  .capa { height: 297mm; width: 210mm; position: relative; overflow: hidden; color: #fff; page-break-after: always;
+          background: radial-gradient(120% 90% at 0% 0%, #24438f 0%, #00236a 55%, #001a52 100%); }
+  .capa .faixa { position: absolute; left: 0; right: 0; bottom: 0; height: 10mm; background: var(--laranja); }
+  .capa .conteudo { position: absolute; left: 22mm; right: 22mm; top: 70mm; }
+  .capa .logo { display: flex; align-items: center; gap: 12pt; margin-bottom: 34mm; }
+  .capa .logo svg { width: 54pt; height: 54pt; }
+  .capa .logo span { font-size: 30pt; font-weight: 600; letter-spacing: -0.5pt; }
+  .capa .logo b { color: var(--laranja); font-weight: 600; }
+  .capa h1 { color: #fff; font-size: 40pt; font-weight: 700; letter-spacing: -1pt; margin-bottom: 10pt; }
+  .capa .sub { font-size: 14pt; color: rgba(255,255,255,0.8); max-width: 140mm; }
+  .capa .rodape { position: absolute; left: 22mm; bottom: 22mm; font-size: 10pt; color: rgba(255,255,255,0.7); }
+
+  /* Sumário */
+  .sumario { page-break-after: always; }
+  .sumario h1 { font-size: 22pt; margin-bottom: 14pt; }
+  .sumario ol { list-style: none; padding: 0; counter-reset: cap; }
+  .sumario > ol > li { counter-increment: cap; margin: 0 0 9pt; font-weight: 600; color: var(--azul); font-size: 11pt; }
+  .sumario > ol > li::before { content: counter(cap) "."; display: inline-block; width: 20pt; color: var(--laranja); }
+  .sumario ol ol { padding-left: 20pt; margin-top: 3pt; display: grid; grid-template-columns: 1fr 1fr; column-gap: 14pt; }
+  .sumario ol ol li { font-weight: 400; color: var(--texto); font-size: 9.6pt; margin: 0 0 1pt; }
+
+  /* Capítulos */
+  .capitulo { page-break-before: always; }
+  .capitulo > .cab { border-bottom: 3pt solid var(--laranja); padding-bottom: 8pt; margin-bottom: 14pt; }
+  .capitulo > .cab .num { font-size: 10pt; font-weight: 700; color: var(--laranja); letter-spacing: 1pt; text-transform: uppercase; }
+  .capitulo > .cab h1 { font-size: 22pt; margin-top: 2pt; }
+  .capitulo > .cab p { color: var(--suave); margin: 4pt 0 0; font-size: 10.5pt; }
+  section.tela { margin: 0 0 16pt; }
+  section.tela + section.tela { border-top: 1px solid var(--linha); padding-top: 14pt; }
+  h2 { font-size: 14.5pt; margin: 0 0 4pt; display: flex; align-items: baseline; gap: 8pt; }
+  h2 .onde { font-size: 8.5pt; font-weight: 600; color: var(--azul-2); background: var(--azul-claro); border-radius: 10pt;
+             padding: 1pt 7pt; white-space: nowrap; }
+  h2, h3 { break-after: avoid; }
+  h3 { font-size: 11pt; margin: 10pt 0 4pt; }
+  .lead { color: #334155; }
+  .quebra { page-break-before: always; }
+  .junto { break-inside: avoid; }
+
+  /* Caixas */
+  .caixa { border-radius: 6pt; padding: 8pt 10pt; margin: 8pt 0 10pt; break-inside: avoid; border: 1px solid; }
+  .caixa .t { font-weight: 700; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.6pt; margin-bottom: 3pt; }
+  .caixa p:last-child, .caixa ul:last-child, .caixa table:last-child { margin-bottom: 0; }
+  .exemplo { background: var(--azul-claro); border-color: #c7d3f0; }
+  .exemplo .t { color: var(--azul-2); }
+  .dica { background: var(--verde-claro); border-color: #a7f3d0; }
+  .dica .t { color: var(--verde); }
+  .atencao { background: var(--laranja-claro); border-color: #fcd9a0; }
+  .atencao .t { color: var(--laranja-escuro); }
+
+  /* Tabelas */
+  table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 9.2pt; break-inside: auto; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  th { text-align: left; background: #f1f5f9; color: #334155; font-weight: 600; padding: 4pt 6pt; border-bottom: 1px solid #cbd5e1; }
+  td { padding: 4pt 6pt; border-bottom: 1px solid var(--linha); vertical-align: top; }
+  .exemplo table th { background: #dfe7f8; }
+  .exemplo table td { border-color: #c7d3f0; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ok { color: var(--verde); font-weight: 600; }
+  .ruim { color: var(--vermelho); font-weight: 600; }
+  .laranja { color: var(--laranja-escuro); font-weight: 600; }
+
+  /* Passos */
+  ol.passos { list-style: none; padding: 0; counter-reset: p; }
+  ol.passos > li { counter-increment: p; position: relative; padding-left: 22pt; margin-bottom: 5pt; }
+  ol.passos > li::before { content: counter(p); position: absolute; left: 0; top: 0.5pt; width: 15pt; height: 15pt; border-radius: 50%;
+                           background: var(--azul); color: #fff; font-size: 8pt; font-weight: 700; text-align: center; line-height: 15pt; }
+  .fluxo { display: flex; flex-wrap: wrap; gap: 5pt; align-items: center; margin: 6pt 0 10pt; }
+  .fluxo span { background: var(--azul); color: #fff; border-radius: 4pt; padding: 3pt 8pt; font-size: 9pt; font-weight: 600; }
+  .fluxo i { color: var(--laranja); font-style: normal; font-weight: 700; }
+  .menu { font-weight: 600; color: var(--azul-2); }
+  .duas { display: grid; grid-template-columns: 1fr 1fr; gap: 10pt; }
+  .duas > .caixa { margin: 0; }
+  .selo { display: inline-block; border-radius: 9pt; padding: 0 6pt; font-size: 8.5pt; font-weight: 600; white-space: nowrap; }
+  .s-verde { background: #d1fae5; color: #065f46; } .s-laranja { background: #ffedd5; color: #9a3412; }
+  .s-vermelho { background: #ffe4e6; color: #9f1239; } .s-azul { background: #e0f2fe; color: #075985; }
+  .s-cinza { background: #f1f5f9; color: #475569; } .s-roxo { background: #ede9fe; color: #5b21b6; }
+</style>
+</head>
+<body>
+
+<!-- ============================== CAPA ============================== -->
+<div class="capa">
+  <div class="conteudo">
+    <div class="logo">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="8" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)"/>
+        <circle cx="16" cy="16" r="9" fill="none" stroke="#fff" stroke-width="2.4"/>
+        <path d="M16 11v5l3.6 2.1" fill="none" stroke="#f39200" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <span>Ge<b>Ponto</b></span>
+    </div>
+    <h1>Manual de uso</h1>
+    <p class="sub">Todas as telas do sistema de controle de ponto — da implantação ao fechamento da folha —, com exemplos práticos de cálculo.</p>
+  </div>
+  <div class="rodape">Versão de novembro de 2026</div>
+  <div class="faixa"></div>
+</div>
+
+<!-- ============================== SUMÁRIO ============================== -->
+<div class="sumario">
+  <h1>Sumário</h1>
+  <ol>
+    <li>Primeiros passos
+      <ol><li>Como entrar no sistema</li><li>Registro rápido de ponto</li><li>O menu</li><li>Perfis de acesso</li><li>Ordem de implantação</li></ol></li>
+    <li>Meu Ponto e Dashboard
+      <ol><li>Registrar ponto</li><li>Visão geral (Dashboard)</li></ol></li>
+    <li>Cadastros
+      <ol><li>Perfis de Eventos</li><li>Jornadas e Escalas</li><li>Feriados</li><li>Local de Ponto</li><li>Colaboradores</li><li>Usuários &amp; Permissões</li></ol></li>
+    <li>Movimentos
+      <ol><li>Consulta de Batidas</li><li>Tratamento de Batidas</li><li>Escalas</li><li>Ocorrências e Afastamentos</li><li>Justificativas</li><li>Banco de Horas</li><li>Conversão do Banco de Horas</li><li>Fechamento de Período</li></ol></li>
+    <li>Relatórios
+      <ol><li>Espelho de Ponto</li><li>Totais e Exportação p/ Folha</li><li>Quebra de Regras</li></ol></li>
+    <li>Como o ponto é calculado — exemplos
+      <ol><li>Tolerâncias</li><li>Intervalo flexível</li><li>Atraso, saída antecipada e falta</li><li>Hora extra, folga e feriado</li><li>Adicional noturno</li><li>Escala 12x36</li></ol></li>
+    <li>Rotina do mês e perguntas frequentes
+      <ol><li>Checklist mensal do RH</li><li>Perguntas frequentes</li><li>Glossário</li></ol></li>
+  </ol>
+</div>
+
+<!-- ============================== 1. PRIMEIROS PASSOS ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 1</div><h1>Primeiros passos</h1>
+    <p>Acesso ao sistema, organização do menu, perfis e a ordem recomendada para colocar o GePonto em funcionamento.</p></div>
+
+  <section class="tela">
+    <h2>Como entrar no sistema</h2>
+    <p>Na tela inicial, a aba <span class="menu">Entrar</span> pede o <strong>usuário (ou e-mail)</strong> e a <strong>senha</strong> fornecidos pelo administrador. Quem recebeu uma senha provisória cria a própria senha no primeiro acesso.</p>
+    <p>Para trocar a senha depois, clique no seu nome, no canto superior direito, e escolha <span class="menu">Alterar senha</span>. No mesmo lugar fica o botão <span class="menu">Sair</span>.</p>
+  </section>
+
+  <section class="tela">
+    <h2>Registro rápido de ponto</h2>
+    <p>A aba <span class="menu">Registrar ponto</span>, na própria tela de entrada, marca o ponto sem abrir o sistema: o colaborador digita login e senha e clica em <strong>Registrar meu ponto</strong>. A marcação é feita no nome dele, no horário oficial de Brasília, e aparece um comprovante na tela.</p>
+    <div class="caixa dica"><div class="t">Dica</div>
+      <p>Esse modo é ideal para um computador ou tablet fixo na recepção (quiosque): cada um registra o próprio ponto e ninguém fica logado na máquina.</p></div>
+  </section>
+
+  <section class="tela">
+    <h2>O menu</h2>
+    <p>O menu fica na barra azul do topo e mostra só as telas que o seu perfil pode ver. Ele é dividido em grupos:</p>
+    <table>
+      <thead><tr><th style="width:22%">Grupo</th><th>O que tem</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Meu Ponto</strong></td><td>Registro do próprio ponto (só para usuários ligados a um colaborador).</td></tr>
+        <tr><td><strong>Dashboard</strong></td><td>Indicadores do dia e do período.</td></tr>
+        <tr><td><strong>Cadastros</strong></td><td>Colaboradores, Jornadas e Escalas, Perfis de Eventos, Feriados, Local de Ponto, Usuários &amp; Permissões.</td></tr>
+        <tr><td><strong>Movimentos</strong></td><td>Batidas (Consulta e Tratamento), Escalas, Ocorrências, Justificativas, Banco de Horas (e Conversão) e Fechamento.</td></tr>
+        <tr><td><strong>Relatórios</strong></td><td>Espelho de Ponto, Totais e Exportação p/ Folha, Quebra de Regras.</td></tr>
+      </tbody>
+    </table>
+    <p>No celular, o menu abre pelo botão <span class="tecla">☰</span> no canto esquerdo.</p>
+  </section>
+
+  <section class="tela junto">
+    <h2>Perfis de acesso</h2>
+    <p>Cada usuário tem um <strong>perfil</strong>, que define <strong>quais telas</strong> ele vê ou altera e <strong>quais colaboradores</strong> ele enxerga (abrangência). O sistema já vem com estes perfis:</p>
+    <table>
+      <thead><tr><th style="width:18%">Perfil</th><th style="width:20%">Enxerga</th><th>Uso típico</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Administrador</strong></td><td>Todos</td><td>Acesso total; configura o sistema.</td></tr>
+        <tr><td><strong>RH</strong></td><td>Todos</td><td>Cadastros, tratamento, ocorrências, justificativas, banco de horas, fechamento e folha.</td></tr>
+        <tr><td><strong>Gestor</strong></td><td>A própria equipe</td><td>Acompanha a equipe, trata batidas e justifica atrasos dos seus liderados.</td></tr>
+        <tr><td><strong>Consulta</strong></td><td>Todos</td><td>Só visualiza indicadores e relatórios.</td></tr>
+        <tr><td><strong>Colaborador</strong></td><td>Só ele mesmo</td><td>Registra o próprio ponto e acompanha o próprio banco de horas.</td></tr>
+      </tbody>
+    </table>
+    <p>Os perfis podem ser ajustados ou criados em <span class="menu">Cadastros › Usuários &amp; Permissões › Perfis</span>.</p>
+  </section>
+
+  <section class="tela junto">
+    <h2>Ordem de implantação</h2>
+    <p>Para começar a usar o sistema, cadastre nesta ordem — cada passo usa o anterior:</p>
+    <div class="fluxo"><span>Perfis de Eventos</span><i>→</i><span>Jornadas</span><i>→</i><span>Feriados</span><i>→</i><span>Local de Ponto</span><i>→</i><span>Colaboradores</span><i>→</i><span>Usuários</span></div>
+    <ol class="passos">
+      <li><strong>Perfis de Eventos:</strong> as regras de cálculo (tolerâncias, % de hora extra, banco de horas, noturno).</li>
+      <li><strong>Jornadas:</strong> os horários de trabalho de cada dia, ou o ciclo da escala.</li>
+      <li><strong>Feriados:</strong> os feriados do ano (os nacionais podem ser preenchidos automaticamente).</li>
+      <li><strong>Local de Ponto:</strong> o endereço e o raio onde o ponto deve ser batido (opcional).</li>
+      <li><strong>Colaboradores:</strong> cada pessoa, com jornada, perfil de eventos e a data de início do controle de ponto.</li>
+      <li><strong>Usuários:</strong> o login de cada colaborador (pode ser gerado em lote) e dos gestores e do RH.</li>
+    </ol>
+  </section>
+</div>
+
+<!-- ============================== 2. MEU PONTO E DASHBOARD ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 2</div><h1>Meu Ponto e Dashboard</h1>
+    <p>A tela do colaborador e o painel de acompanhamento do RH e dos gestores.</p></div>
+
+  <section class="tela">
+    <h2>Registrar ponto <span class="onde">Meu Ponto › Registrar ponto</span></h2>
+    <p class="lead">Onde o colaborador faz as marcações e acompanha o próprio dia.</p>
+    <ul>
+      <li>O relógio mostra o <strong>horário oficial</strong> (servidor, fuso de Brasília) — não o do aparelho.</li>
+      <li>Abaixo aparecem a jornada e o <strong>horário previsto de hoje</strong>, as <strong>marcações de hoje</strong>, o previsto, o trabalhado até agora e o <strong>saldo do banco de horas</strong>.</li>
+      <li>Em <strong>Últimos dias</strong> ficam os dias anteriores, com saldo e ocorrência de cada um.</li>
+      <li>Cada batida guarda a <strong>localização do aparelho</strong>, se o navegador permitir. Fora do local cadastrado o ponto é registrado normalmente e fica marcado para o RH conferir.</li>
+      <li>Em dia de folga, feriado ou para quem não tem controle de ponto, a batida é registrada e a tela avisa como ela foi classificada.</li>
+    </ul>
+    <div class="caixa atencao"><div class="t">Importante</div>
+      <p>O colaborador <strong>não escolhe</strong> se a batida é entrada ou saída: ele só registra. O sistema classifica pela ordem do dia (entrada, saída, entrada, saída…) e o RH pode corrigir no Tratamento de Batidas.</p></div>
+    <p>Se aparecer “Seu usuário não está vinculado a um colaborador”, o login ainda não foi ligado a um cadastro de colaborador (aba <strong>Acesso ao ponto</strong> do colaborador ou Usuários &amp; Permissões).</p>
+  </section>
+
+  <section class="tela">
+    <h2>Visão geral <span class="onde">Dashboard</span></h2>
+    <p class="lead">Indicadores para decidir rápido, atualizados ao vivo.</p>
+    <ul>
+      <li><strong>Hoje:</strong> presentes, situação de cada colaborador (em jornada, em intervalo, aguardando entrada, jornada encerrada, ausente, folga, férias…) e registros do dia.</li>
+      <li><strong>Período</strong> (este mês, mês anterior, últimos 30 dias ou datas livres): faltas, atrasos, faltas e atrasos por dia, e o ranking dos <strong>maiores atrasos</strong>.</li>
+      <li><strong>Banco de horas:</strong> saldo positivo e negativo da empresa e o saldo por colaborador até o fim do período.</li>
+    </ul>
+    <p>O colaborador que abre o Dashboard vê só o próprio painel: os dias do período, saldo e ocorrências.</p>
+  </section>
+</div>
+
+<!-- ============================== 3. CADASTROS ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 3</div><h1>Cadastros</h1>
+    <p>As informações que o sistema usa para calcular o ponto de cada pessoa.</p></div>
+
+  <section class="tela">
+    <h2>Perfis de Eventos <span class="onde">Cadastros › Perfis de Eventos</span></h2>
+    <p class="lead">As <strong>regras de cálculo</strong> do ponto. Ficam separadas da jornada: duas pessoas com o mesmo horário podem ter regras diferentes (por exemplo, uma com banco de horas e outra com hora extra paga).</p>
+    <table>
+      <thead><tr><th style="width:30%">Campo</th><th>Para que serve</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Tolerância</strong> — por batida</td><td>Entrada e saída (padrão 5 min cada). A marcação dentro da tolerância conta como o horário previsto; fora dela, conta a diferença inteira (CLT art. 58 §1º).</td></tr>
+        <tr><td><strong>Tolerância</strong> — geral do dia</td><td>Padrão 10 min. Se a diferença entre trabalhado e previsto ficar dentro dela, o dia fecha sem extra e sem débito.</td></tr>
+        <tr><td><strong>% de hora extra por dia</strong></td><td>Um percentual para cada dia da semana, mais <strong>Feriado</strong> e <strong>Folga</strong>. Cada percentual vira um evento na exportação da folha.</td></tr>
+        <tr><td><strong>Limite de HE por dia</strong></td><td>Acima dele o dia aparece em Quebra de Regras (padrão 120 min, CLT art. 59). 0 = sem limite.</td></tr>
+        <tr><td><strong>Banco de horas</strong></td><td>Ligado: o saldo do dia vai para o banco, hora por hora. Desligado: extras, faltas e atrasos vão para a folha.</td></tr>
+        <tr><td><strong>Adicional noturno</strong></td><td>Faixa (padrão 22:00–05:00), percentual (mínimo 20%) e <strong>hora noturna reduzida</strong> (52min30s valem 1 hora).</td></tr>
+        <tr><td><strong>Padrão</strong></td><td>O perfil usado por quem é cadastrado sem escolher um. Só um perfil é o padrão.</td></tr>
+      </tbody>
+    </table>
+    <div class="caixa exemplo"><div class="t">Exemplo — dois perfis comuns</div>
+      <table>
+        <thead><tr><th>Perfil</th><th>Tolerância</th><th>HE seg–sáb</th><th>HE dom/feriado/folga</th><th>Banco</th></tr></thead>
+        <tbody>
+          <tr><td>Administrativo</td><td>5 min por batida</td><td class="n">50%</td><td class="n">100%</td><td>Sim</td></tr>
+          <tr><td>Operação</td><td>10 min no dia</td><td class="n">50%</td><td class="n">100%</td><td>Não (paga na folha)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Jornadas e Escalas <span class="onde">Cadastros › Jornadas e Escalas</span></h2>
+    <p class="lead">Os horários de trabalho. Cada jornada é de um destes tipos:</p>
+    <ul>
+      <li><strong>Semanal:</strong> um horário para cada dia da semana (ou folga). Ex.: seg a qui 08:00–18:00, sex 08:00–17:00.</li>
+      <li><strong>Escala / revezamento:</strong> um ciclo de dias que se repete a partir de uma <strong>data de início</strong> (o dia 1). Ex.: 12x36 = ciclo de 2 dias; 5x1 = ciclo de 6 dias.</li>
+    </ul>
+    <p>Em cada dia informe <strong>Entrada</strong>, <strong>Saída intervalo</strong>, <strong>Retorno</strong> e <strong>Saída</strong>. Sem intervalo, deixe os dois campos do meio em branco. Turnos que viram a meia-noite (22:00–06:00) são aceitos: as batidas da madrugada contam no dia em que o turno começou.</p>
+
+    <div class="junto">
+    <h3>Intervalo flexível</h3>
+    <p>Com a opção <strong>Intervalo flexível</strong> ligada, a saída e o retorno do intervalo <strong>não precisam bater nos horários fixos</strong>. O que vale é a <strong>duração</strong> (retorno − saída cadastrados: 12:00–13:00 = 1h). O colaborador sai para o intervalo quando quiser, e o retorno esperado passa a ser <em>a hora em que ele saiu + a duração</em>. A entrada e a saída do dia continuam com os horários fixos.</p>
+    <div class="caixa exemplo"><div class="t">Exemplo — intervalo de 1h, tolerância de 5 min por batida</div>
+      <table>
+        <thead><tr><th>Batidas do dia</th><th>Intervalo fixo</th><th>Intervalo flexível</th></tr></thead>
+        <tbody>
+          <tr><td>08:00 · 11:00 · 12:02 · 17:00</td><td>Saída antecipada às 11:00, saldo <span class="ruim">−2 min</span></td><td>Retorno esperado 12:00 → <span class="ok">saldo 0</span></td></tr>
+          <tr><td>08:00 · 11:00 · 12:30 · 17:00</td><td>Saldo <span class="ruim">−30 min</span></td><td>Intervalo de 1h30 → <span class="ruim">−30 min</span> (intervalo além do previsto)</td></tr>
+          <tr><td>08:00 · 12:00 · 13:00 · 17:00</td><td><span class="ok">Saldo 0</span></td><td><span class="ok">Saldo 0</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    </div>
+    <div class="caixa dica"><div class="t">Dica</div>
+      <p>Alterar uma jornada recalcula o banco de horas dos dias já encerrados de quem a usa. Para mudar o horário de <em>uma pessoa</em> a partir de uma data, troque a jornada no cadastro do colaborador, informando a data de vigência — o histórico fica preservado.</p></div>
+  </section>
+
+  <section class="tela">
+    <h2>Feriados <span class="onde">Cadastros › Feriados</span></h2>
+    <p>Dias sem jornada prevista. Quem trabalha no feriado recebe as horas como <strong>extra de feriado</strong> (percentual “Feriado” do perfil de eventos). Cadastre data, descrição e abrangência (nacional, estadual, municipal ou ponto facultativo). Use as setas para navegar entre os anos; os feriados nacionais podem ser incluídos de uma vez.</p>
+    <div class="caixa atencao"><div class="t">Atenção</div>
+      <p>Se alguém precisa trabalhar normalmente no feriado (sem receber como extra), lance para essa pessoa uma <strong>escala de trabalho</strong> no dia (Movimentos › Escalas): o feriado deixa de valer para ela.</p></div>
+  </section>
+
+  <section class="tela">
+    <h2>Local de Ponto <span class="onde">Cadastros › Local de Ponto</span></h2>
+    <p>A <strong>cerca virtual</strong>: o local e o raio em que o colaborador deve bater o ponto. Cada batida guarda a localização do aparelho e é comparada com ele.</p>
+    <ol class="passos">
+      <li>Estando <strong>no local</strong> (de preferência pelo celular, ao ar livre ou perto de uma janela), clique para capturar a localização.</li>
+      <li>Informe o nome, o endereço e o <strong>raio permitido</strong> — sugestão de 100 a 300 m, pois o GPS costuma errar de 10 a 50 m.</li>
+      <li>Deixe ligado <strong>Conferir a localização das batidas</strong>.</li>
+    </ol>
+    <p>Batidas além do raio, ou sem localização, são <strong>registradas normalmente</strong> (Portaria 671: o ponto nunca é bloqueado) e aparecem em Quebra de Regras como “Batida fora do local” ou “Batida sem localização”.</p>
+  </section>
+
+  <section class="tela">
+    <h2>Colaboradores <span class="onde">Cadastros › Colaboradores</span></h2>
+    <p class="lead">Dados pessoais e profissionais, situação e histórico de movimentações.</p>
+    <table>
+      <thead><tr><th style="width:22%">Aba</th><th>O que tem</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Dados pessoais</strong></td><td>Nome, CPF, PIS, contato.</td></tr>
+        <tr><td><strong>Profissional</strong></td><td>Matrícula, cargo, departamento, gestor, admissão/desligamento, situação, <strong>jornada</strong>, <strong>perfil de eventos</strong>, <strong>Controla ponto</strong> e <strong>Controlar ponto a partir de</strong>.</td></tr>
+        <tr><td><strong>Endereço</strong></td><td>Endereço completo.</td></tr>
+        <tr><td><strong>Acesso ao ponto</strong></td><td>Cria o login próprio do colaborador para registrar o ponto.</td></tr>
+        <tr><td><strong>Histórico</strong></td><td>Movimentações: troca de cargo, departamento, jornada, situação…</td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li><strong>Controla ponto</strong> desligado: as batidas são registradas, mas não entram na apuração (diretoria, por exemplo).</li>
+      <li><strong>Controlar ponto a partir de:</strong> dias antes dessa data não geram falta. Use na implantação ou na admissão.</li>
+      <li>Ao alterar jornada, cargo ou departamento, o sistema pergunta <strong>a partir de quando</strong> vale a mudança. Os dias anteriores continuam com a jornada antiga.</li>
+    </ul>
+  </section>
+
+  <section class="tela">
+    <h2>Usuários &amp; Permissões <span class="onde">Cadastros › Usuários &amp; Permissões</span></h2>
+    <p>Duas abas:</p>
+    <ul>
+      <li><strong>Usuários:</strong> os logins. Cada usuário pode ser ligado a um colaborador — o ponto registrado por esse login é sempre o dele. Você pode exigir troca de senha no primeiro acesso, bloquear o acesso, encerrar as sessões abertas ou excluir o usuário (as batidas e o histórico do colaborador são mantidos).</li>
+      <li><strong>Perfis:</strong> para cada tela, se o perfil pode <strong>Ver</strong> e <strong>Alterar</strong>; e a <strong>abrangência</strong>: todos os colaboradores, a equipe (liderados do colaborador ligado ao usuário) ou só o próprio.</li>
+    </ul>
+    <div class="caixa exemplo"><div class="t">Exemplo — gerar os acessos de todos de uma vez</div>
+      <ol class="passos">
+        <li>Clique em <strong>Gerar acessos dos colaboradores</strong>.</li>
+        <li>Marque quem ainda não tem acesso, escolha o login (ex.: a matrícula), o perfil <strong>Colaborador</strong> e uma senha provisória igual para todos.</li>
+        <li>Cada pessoa entra com a matrícula e a senha provisória e cria a própria senha no primeiro acesso.</li>
+      </ol>
+    </div>
+  </section>
+</div>
+
+<!-- ============================== 4. MOVIMENTOS ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 4</div><h1>Movimentos</h1>
+    <p>O tratamento do dia a dia: batidas, exceções de horário, ausências, justificativas, banco de horas e fechamento.</p></div>
+
+  <section class="tela">
+    <h2>Consulta de Batidas <span class="onde">Movimentos › Batidas › Consulta</span></h2>
+    <p class="lead">Uma linha por batida e uma por marcação prevista que não foi batida, com o horário previsto e a <strong>situação</strong>. É a melhor tela para conferir o ponto de alguém.</p>
+    <p>Filtre por período, lotação, cargo, jornada ou colaborador. Clique na batida (ou use o botão direito na linha) para tratá-la ali mesmo. As marcações são identificadas por sigla: <strong>E1</strong> entrada, <strong>S1</strong> saída para o intervalo, <strong>E2</strong> retorno, <strong>S2</strong> saída.</p>
+    <table>
+      <thead><tr><th style="width:32%">Situação</th><th>Significado</th></tr></thead>
+      <tbody>
+        <tr><td><span class="selo s-verde">Batida precisa</span></td><td>Exatamente no minuto previsto.</td></tr>
+        <tr><td><span class="selo s-verde">Dentro da tolerância</span></td><td>Fora do minuto, mas dentro da tolerância do perfil.</td></tr>
+        <tr><td><span class="selo s-laranja">Batida em atraso</span></td><td>Entrada depois do previsto, além da tolerância.</td></tr>
+        <tr><td><span class="selo s-vermelho">Saída antecipada</span></td><td>Saída antes do previsto, além da tolerância.</td></tr>
+        <tr><td><span class="selo s-azul">Antes do previsto</span> / <span class="selo s-roxo">Após o previsto</span></td><td>Entrada antes ou saída depois do horário (possível hora extra).</td></tr>
+        <tr><td><span class="selo s-verde">Intervalo flexível</span></td><td>Saída para o intervalo em jornada com intervalo flexível.</td></tr>
+        <tr><td><span class="selo s-laranja">Intervalo além do previsto</span> / <span class="selo s-roxo">menor que o previsto</span></td><td>Retorno do intervalo flexível fora da duração, além da tolerância.</td></tr>
+        <tr><td><span class="selo s-laranja">Turno incompleto</span></td><td>Batida sem o par (entrada sem saída): o turno não é apurado.</td></tr>
+        <tr><td><span class="selo s-vermelho">Não registrada</span></td><td>Marcação prevista que não foi batida.</td></tr>
+        <tr><td><span class="selo s-cinza">Em feriado / folga / ausência</span></td><td>Batida em dia sem previsão normal.</td></tr>
+        <tr><td><span class="selo s-cinza">Não controlada</span></td><td>Colaborador sem controle de ponto no dia.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="tela">
+    <h2>Tratamento de Batidas <span class="onde">Movimentos › Batidas › Tratamento</span></h2>
+    <p class="lead">Correção das batidas, sempre com motivo e registro de quem fez.</p>
+    <table>
+      <thead><tr><th style="width:28%">Ação</th><th>Quando usar</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Incluir batida</strong></td><td>Esquecimento, falha no relógio, serviço externo. Informe data, hora e motivo.</td></tr>
+        <tr><td><strong>Editar / apagar incluída</strong></td><td>Corrigir uma batida que foi incluída manualmente.</td></tr>
+        <tr><td><strong>Desconsiderar</strong></td><td>Batida original indevida (duplicada, por engano). Ela continua gravada, em vermelho, mas sai da apuração. <em>Batidas originais nunca são apagadas nem editadas</em> (Portaria 671).</td></tr>
+        <tr><td><strong>Classificar</strong></td><td>Declarar se a batida é entrada ou saída e de qual turno (E1, S1, E2…), quando a sequência automática ficar errada.</td></tr>
+        <tr><td><strong>Data de referência</strong></td><td>Dizer a qual dia de trabalho a batida pertence — ex.: a saída das 02:00 de um turno que começou na véspera.</td></tr>
+        <tr><td><strong>Histórico de ajustes</strong></td><td>Auditoria: o que mudou, quem mudou, quando e por quê.</td></tr>
+      </tbody>
+    </table>
+    <p>Filtre por período, lotação, <strong>empregado</strong> e status (original, incluída, desconsiderada).</p>
+    <div class="caixa exemplo"><div class="t">Exemplo — esqueceu de bater o retorno do almoço</div>
+      <p>Batidas: 08:00 · 12:00 · 17:00. O sistema forma 08:00→12:00 e deixa 17:00 como <strong>turno incompleto</strong> (o 2º turno não é apurado e vira débito). Inclua a batida das <strong>13:00</strong> com o motivo “Esquecimento de marcação”: o dia passa a 08:00–12:00 · 13:00–17:00 e fecha com saldo zero.</p>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Escalas <span class="onde">Movimentos › Escalas</span></h2>
+    <p class="lead">Previsão de trabalho ou de folga em <strong>dias específicos</strong>, fora do padrão da jornada.</p>
+    <ul>
+      <li><strong>Trabalho:</strong> o dia passa a ter previsão normal, com os horários informados — mesmo sendo folga ou feriado. Só o que passar da previsão é hora extra.</li>
+      <li><strong>Folga:</strong> o dia fica sem previsão, mesmo sendo dia de trabalho na jornada.</li>
+    </ul>
+    <p>A grade mostra colaboradores × dias. Clique nos dias para selecioná-los e lance a escala, ou use <strong>Lançar por período</strong> (com filtro por dia da semana) para vários colaboradores de uma vez.</p>
+    <div class="caixa exemplo"><div class="t">Exemplo — sábado de inventário</div>
+      <p>A loja vai trabalhar no sábado 08:00–12:00 e dar folga na segunda seguinte. Lance <strong>trabalho 08:00–12:00</strong> no sábado e <strong>folga</strong> na segunda para a equipe. As 4h do sábado contam como jornada normal (não como extra) e a segunda não gera falta.</p>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Ocorrências e Afastamentos <span class="onde">Movimentos › Ocorrências e Afastamentos</span></h2>
+    <p class="lead">Ausências planejadas ou comprovadas, de um ou mais dias, para um colaborador ou vários de uma vez.</p>
+    <table>
+      <thead><tr><th style="width:25%">Tipo</th><th>Exemplo</th></tr></thead>
+      <tbody>
+        <tr><td>Atestado médico</td><td>Atestado de 3 dias, CID informado na justificativa.</td></tr>
+        <tr><td>Afastamento</td><td>INSS, licença maternidade/paternidade.</td></tr>
+        <tr><td>Férias</td><td>Gozo de 30 dias.</td></tr>
+        <tr><td>Folga</td><td>Folga concedida ou compensada.</td></tr>
+        <tr><td>Falta justificada</td><td>Faltas legais da CLT art. 473: casamento, óbito, doação de sangue…</td></tr>
+        <tr><td>Abono</td><td>Abono do dia inteiro ou de <strong>algumas horas</strong> de um dia.</td></tr>
+      </tbody>
+    </table>
+    <p>Com <strong>Abona a jornada</strong> ligado, os dias não geram falta nem débito. Desligado, a ocorrência fica registrada, mas o dia continua como falta.</p>
+    <div class="caixa dica"><div class="t">Ocorrência ou justificativa?</div>
+      <p>Use <strong>Ocorrências</strong> para ausências de dias inteiros, inclusive futuras (férias agendadas). Use <strong>Justificativas</strong> para tratar um atraso, uma saída antecipada ou uma falta que o ponto já apurou.</p></div>
+  </section>
+
+  <section class="tela">
+    <h2>Justificativas <span class="onde">Movimentos › Justificativas</span></h2>
+    <p class="lead">Lista os <strong>atrasos, saídas antecipadas e faltas</strong> apurados no período. Para cada um, registre o motivo e decida o que fazer com o tempo.</p>
+    <table>
+      <thead><tr><th style="width:20%">Opção</th><th>Efeito</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Só justificar</strong></td><td>O motivo fica registrado, mas o tempo continua sendo descontado (atraso, falta ou débito no banco).</td></tr>
+        <tr><td><strong>Abonar tudo</strong></td><td>O tempo deixa de contar como atraso/saída e não gera débito. Na falta, o dia deixa de ser falta.</td></tr>
+        <tr><td><strong>Abonar parte</strong></td><td>Abona só a quantidade informada; o restante continua sendo descontado.</td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>A tela abre com o que está <strong>sem justificativa</strong> no mês. Filtre por situação, tipo, departamento e colaborador.</li>
+      <li>Marque várias linhas para justificar todas com o mesmo motivo (<strong>Justificar selecionadas</strong>).</li>
+      <li>Os dias abonados aparecem como <span class="selo s-azul">Atraso abonado</span>, <span class="selo s-azul">Saída abonada</span> ou <span class="selo s-azul">Falta abonada</span> no espelho e nos relatórios.</li>
+    </ul>
+    <div class="caixa exemplo"><div class="t">Exemplo — atraso por consulta médica</div>
+      <p>Jornada 08:00–17:00. A colaboradora entrou às <strong>08:30</strong> (atraso de 30 min) e trouxe declaração de comparecimento da consulta, que terminou às 08:10.</p>
+      <table>
+        <thead><tr><th>Escolha</th><th class="n">Atraso</th><th class="n">Saldo do dia</th></tr></thead>
+        <tbody>
+          <tr><td>Nenhuma justificativa</td><td class="n">30 min</td><td class="n ruim">−0h30</td></tr>
+          <tr><td>Só justificar (“Consulta médica”)</td><td class="n">30 min</td><td class="n ruim">−0h30</td></tr>
+          <tr><td>Abonar parte: 0:10</td><td class="n">20 min</td><td class="n ruim">−0h20</td></tr>
+          <tr><td>Abonar tudo</td><td class="n">0</td><td class="n ok">0h00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Banco de Horas <span class="onde">Movimentos › Banco de horas</span></h2>
+    <p class="lead">Relatório dia a dia: previsto e realizado de cada marcação, o resultado de cada turno e o saldo acumulado.</p>
+    <ul>
+      <li>Cada dia encerrado gera um <strong>lançamento automático</strong> com o saldo apurado (para quem tem banco de horas no perfil). Ele não pode ser excluído: para corrigi-lo, ajuste as batidas.</li>
+      <li><strong>Lançamentos manuais</strong>, com justificativa: <em>Crédito</em>, <em>Débito</em>, <em>Compensação</em> (folga ou saída antecipada usando o saldo) e <em>Ajuste</em> (correção positiva ou negativa).</li>
+      <li>Turno que não fechou (entrada sem saída) não é computado e o previsto dele vira débito.</li>
+    </ul>
+    <div class="caixa exemplo"><div class="t">Exemplo — uma semana de banco de horas</div>
+      <table>
+        <thead><tr><th>Dia</th><th>Previsto</th><th>Trabalhado</th><th class="n">Saldo do dia</th><th class="n">Acumulado</th></tr></thead>
+        <tbody>
+          <tr><td>Seg</td><td>8h00</td><td>9h00</td><td class="n ok">+1h00</td><td class="n">+1h00</td></tr>
+          <tr><td>Ter</td><td>8h00</td><td>8h04 <span style="color:var(--suave)">(dentro da tolerância)</span></td><td class="n">0h00</td><td class="n">+1h00</td></tr>
+          <tr><td>Qua</td><td>8h00</td><td>7h15</td><td class="n ruim">−0h45</td><td class="n">+0h15</td></tr>
+          <tr><td>Qui</td><td>8h00</td><td>9h30</td><td class="n ok">+1h30</td><td class="n">+1h45</td></tr>
+          <tr><td>Sex</td><td colspan="2">Compensação manual de 1h45 (saiu mais cedo, autorizado)</td><td class="n ruim">−1h45</td><td class="n">0h00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Conversão do Banco de Horas <span class="onde">Movimentos › Banco de horas › Conversão</span></h2>
+    <p>Converte o saldo em <strong>pagamento de horas extras</strong> ou em <strong>desconto na folha</strong>. O valor sai do banco e vai para os eventos “Banco de horas convertido” em Totais e Exportação.</p>
+    <ol class="passos">
+      <li>Escolha <strong>o que converter</strong>: saldo positivo, saldo negativo ou os dois.</li>
+      <li>Informe o <strong>saldo até a data</strong> e, se quiser, um <strong>limite por colaborador</strong>.</li>
+      <li>Confira a prévia, marque quem entra e confirme com uma justificativa.</li>
+    </ol>
+    <div class="caixa exemplo"><div class="t">Exemplo</div>
+      <p>Fim do semestre, limite de 10h por pessoa. Ana tem +14h30 → <strong>10h</strong> são pagas como extra e 4h30 ficam no banco. Bruno tem −3h → as 3h são <strong>descontadas</strong> na folha e o banco dele zera. Errou? Use <strong>Estornar</strong> no histórico: as horas voltam para o banco.</p>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Fechamento de Período <span class="onde">Movimentos › Fechamento de Período</span></h2>
+    <p class="lead">Confere as pendências da competência e <strong>congela</strong> o período: batidas, ocorrências, escalas, justificativas e banco de horas desses dias não mudam mais.</p>
+    <ol class="passos">
+      <li>Escolha o período (o mês anterior já vem preenchido) e clique em <strong>Verificar pendências</strong>.</li>
+      <li>Trate o que aparecer: <strong>marcações ímpares</strong>, <strong>faltas sem justificativa</strong> e <strong>dias sem jornada</strong>.</li>
+      <li>Clique em <strong>Fechar período</strong> (ou “Fechar mesmo com pendências”, se for o caso).</li>
+    </ol>
+    <p>Precisou corrigir algo depois? Use <strong>Reabrir</strong> na lista de períodos fechados, ajuste e feche de novo.</p>
+  </section>
+</div>
+
+<!-- ============================== 5. RELATÓRIOS ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 5</div><h1>Relatórios</h1>
+    <p>Espelho para assinatura, totais para a folha e conferência das regras da CLT.</p></div>
+
+  <section class="tela">
+    <h2>Espelho de Ponto <span class="onde">Relatórios › Espelho de Ponto</span></h2>
+    <p>Relatório mensal por colaborador, com as marcações <strong>originais e tratadas</strong> identificadas (Portaria 671), horas trabalhadas, extras, noturno, faltas, atrasos e banco de horas, e o campo de assinatura.</p>
+    <p>Escolha o período, o departamento ou o colaborador e gere. Cada colaborador sai em uma página; use <strong>Imprimir / salvar PDF</strong>.</p>
+  </section>
+
+  <section class="tela">
+    <h2>Totais e Exportação p/ Folha <span class="onde">Relatórios › Totais e Exportação p/ Folha</span></h2>
+    <p>Totais do período por colaborador — trabalhado, horas extras por percentual, noturno, faltas, atrasos/saídas, DSR, dias trabalhados e banco de horas — prontos para o arquivo de movimento da folha. Entram os dias até ontem.</p>
+    <ol class="passos">
+      <li>Na primeira vez, abra <strong>Eventos da folha</strong> e informe o <strong>código de cada verba</strong> no seu sistema de folha. Eventos sem código ou desligados não vão para o arquivo.</li>
+      <li>Escolha a competência e clique em <strong>Apurar</strong>.</li>
+      <li>Em <strong>Arquivo para a folha</strong>, escolha o layout e o formato das horas e baixe o arquivo.</li>
+    </ol>
+    <div class="caixa exemplo"><div class="t">Exemplo — arquivo gerado</div>
+      <div class="duas">
+        <div><p><strong>CSV</strong> (matrícula;evento;quantidade), horas em decimal:</p>
+          <p><code>1001;150;2,50</code><br><code>1001;160;4,00</code><br><code>1002;400;8,00</code></p></div>
+        <div><p>Leitura: matrícula 1001 tem 2h30 de HE 50% (código 150) e 4h de HE 100% (código 160); a matrícula 1002 tem 8h de faltas (código 400).</p>
+          <p>Também há o layout <strong>TXT posicional</strong> (10+5+9 caracteres) e horas em <strong>01:30</strong>.</p></div>
+      </div>
+    </div>
+    <div class="caixa atencao"><div class="t">Atenção</div>
+      <p>Quem tem banco de horas no perfil manda o saldo para o banco, não para a folha. Só entram na folha as horas convertidas na <strong>Conversão do Banco de Horas</strong>.</p></div>
+  </section>
+
+  <section class="tela junto">
+    <h2>Quebra de Regras <span class="onde">Relatórios › Quebra de Regras</span></h2>
+    <p>Dias que descumprem a CLT ou as regras do perfil, para o RH agir antes do fechamento:</p>
+    <table>
+      <thead><tr><th style="width:30%">Regra</th><th>Quando aparece</th></tr></thead>
+      <tbody>
+        <tr><td>Interjornada &lt; 11h</td><td>Menos de 11h de descanso entre um dia e outro (art. 66).</td></tr>
+        <tr><td>Intervalo insuficiente</td><td>Acima de 6h com intervalo menor que 1h, ou de 4h a 6h com menos de 15 min (art. 71).</td></tr>
+        <tr><td>Jornada acima de 10h</td><td>Mais de 10h trabalhadas no dia (art. 59).</td></tr>
+        <tr><td>Extra acima do limite</td><td>Hora extra acima do limite diário do perfil de eventos.</td></tr>
+        <tr><td>Marcação ímpar</td><td>Batida sem o par no dia.</td></tr>
+        <tr><td>Batida fora do local / sem localização</td><td>Batida além do raio do Local de Ponto, ou sem GPS.</td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<!-- ============================== 6. CÁLCULOS ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 6</div><h1>Como o ponto é calculado — exemplos</h1>
+    <p>Situações reais, passo a passo. Nos exemplos, a jornada é 08:00–12:00 · 13:00–17:00 (8h) quando nada for dito.</p></div>
+
+  <section class="tela">
+    <h2>Tolerâncias</h2>
+    <div class="duas">
+      <div class="caixa exemplo"><div class="t">Por batida (5 min)</div>
+        <table>
+          <thead><tr><th>Entrada</th><th>Conta como</th><th class="n">Atraso</th></tr></thead>
+          <tbody>
+            <tr><td>07:57</td><td>08:00</td><td class="n">—</td></tr>
+            <tr><td>08:04</td><td>08:00</td><td class="n">—</td></tr>
+            <tr><td>08:06</td><td>08:06</td><td class="n laranja">6 min</td></tr>
+            <tr><td>08:12</td><td>08:12</td><td class="n laranja">12 min</td></tr>
+          </tbody>
+        </table>
+        <p>Passou da tolerância, conta a diferença <strong>inteira</strong> (não só o que excedeu).</p></div>
+      <div class="caixa exemplo"><div class="t">Geral do dia (10 min)</div>
+        <table>
+          <thead><tr><th>Trabalhado</th><th>Diferença</th><th class="n">Saldo</th></tr></thead>
+          <tbody>
+            <tr><td>8h07</td><td>+7 min</td><td class="n">0</td></tr>
+            <tr><td>7h52</td><td>−8 min</td><td class="n">0</td></tr>
+            <tr><td>8h15</td><td>+15 min</td><td class="n ok">+0h15</td></tr>
+            <tr><td>7h45</td><td>−15 min</td><td class="n ruim">−0h15</td></tr>
+          </tbody>
+        </table>
+        <p>Dentro de ±10 min o dia fecha zerado; fora, conta tudo.</p></div>
+    </div>
+  </section>
+
+  <section class="tela">
+    <h2>Intervalo flexível</h2>
+    <p>Jornada com intervalo flexível de 1h e tolerância de 5 min. O colaborador saiu para o almoço às <strong>11:20</strong>.</p>
+    <table>
+      <thead><tr><th>Retorno</th><th>Retorno esperado</th><th>Situação</th><th class="n">Efeito no dia</th></tr></thead>
+      <tbody>
+        <tr><td>12:20</td><td>12:20</td><td><span class="selo s-verde">Batida precisa</span></td><td class="n">0</td></tr>
+        <tr><td>12:24</td><td>12:20</td><td><span class="selo s-verde">Dentro da tolerância</span></td><td class="n">0</td></tr>
+        <tr><td>12:40</td><td>12:20</td><td><span class="selo s-laranja">Intervalo além do previsto</span></td><td class="n ruim">−0h20</td></tr>
+        <tr><td>12:00</td><td>12:20</td><td><span class="selo s-roxo">Intervalo menor que o previsto</span></td><td class="n ok">+0h20</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="tela">
+    <h2>Atraso, saída antecipada e falta</h2>
+    <table>
+      <thead><tr><th>Batidas</th><th>Ocorrência</th><th class="n">Saldo</th></tr></thead>
+      <tbody>
+        <tr><td>08:25 · 12:00 · 13:00 · 17:00</td><td>Atraso de 25 min</td><td class="n ruim">−0h25</td></tr>
+        <tr><td>08:00 · 12:00 · 13:00 · 16:20</td><td>Saída antecipada de 40 min</td><td class="n ruim">−0h40</td></tr>
+        <tr><td>(nenhuma)</td><td>Falta</td><td class="n ruim">−8h00</td></tr>
+        <tr><td>(nenhuma) + atestado em Ocorrências</td><td>Atestado médico</td><td class="n">0</td></tr>
+        <tr><td>08:25 … + justificativa “Abonar tudo”</td><td>Atraso abonado</td><td class="n">0</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="tela">
+    <h2>Hora extra, folga e feriado</h2>
+    <p>O percentual de hora extra vem do perfil de eventos: um por dia da semana, mais <strong>Feriado</strong> e <strong>Folga</strong>.</p>
+    <table>
+      <thead><tr><th>Situação</th><th>Como conta</th></tr></thead>
+      <tbody>
+        <tr><td>Terça, saiu 18:30 (jornada até 17:00)</td><td>+1h30 a 50% (ou crédito no banco)</td></tr>
+        <tr><td>Sábado de folga na jornada, trabalhou 08:00–12:00</td><td>4h a 100% (percentual “Folga”)</td></tr>
+        <tr><td>Feriado, trabalhou 08:00–12:00</td><td>4h a 100% (percentual “Feriado”)</td></tr>
+        <tr><td>Feriado com <em>escala de trabalho</em> 08:00–12:00</td><td>Dia normal: 4h previstas, nada de extra</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="tela">
+    <h2>Adicional noturno</h2>
+    <p>Faixa noturna 22:00–05:00, hora noturna reduzida ligada. Vigia que trabalhou das <strong>22:00 às 05:00</strong>: são 7h de relógio, que valem <strong>8h noturnas</strong> (420 min ÷ 52,5 min = 8 h), pagas com o adicional do perfil (ex.: 20%).</p>
+  </section>
+
+  <section class="tela junto">
+    <h2>Escala 12x36</h2>
+    <p>Jornada do tipo <strong>Escala</strong>, ciclo de 2 dias, data de início em 01/11: dia 1 trabalha 07:00–19:00 (com 1h de intervalo), dia 2 folga.</p>
+    <table>
+      <thead><tr><th>Data</th><th>01/11</th><th>02/11</th><th>03/11</th><th>04/11</th><th>05/11</th><th>06/11</th></tr></thead>
+      <tbody><tr><td>Previsto</td><td>11h</td><td>folga</td><td>11h</td><td>folga</td><td>11h</td><td>folga</td></tr></tbody>
+    </table>
+    <p>Para a escala noturna (19:00–07:00), as batidas da madrugada contam no dia em que o turno começou.</p>
+  </section>
+</div>
+
+<!-- ============================== 7. ROTINA E FAQ ============================== -->
+<div class="capitulo">
+  <div class="cab"><div class="num">Capítulo 7</div><h1>Rotina do mês e perguntas frequentes</h1>
+    <p>Um roteiro para o RH e respostas para as dúvidas mais comuns.</p></div>
+
+  <section class="tela">
+    <h2>Checklist mensal do RH</h2>
+    <ol class="passos">
+      <li><strong>Durante o mês:</strong> acompanhe o Dashboard; lance férias, atestados e afastamentos em Ocorrências; trate esquecimentos em Tratamento de Batidas.</li>
+      <li><strong>Até o dia 3 do mês seguinte:</strong> abra <strong>Justificativas</strong> (sem justificativa, mês anterior) e trate atrasos, saídas e faltas.</li>
+      <li>Rode <strong>Quebra de Regras</strong> e corrija o que for erro de marcação.</li>
+      <li>Se houver conversão de banco de horas na competência, faça em <strong>Conversão do Banco de Horas</strong>.</li>
+      <li>Em <strong>Fechamento de Período</strong>, verifique as pendências e feche o mês.</li>
+      <li>Gere o <strong>Espelho de Ponto</strong> para assinatura.</li>
+      <li>Em <strong>Totais e Exportação</strong>, apure e baixe o arquivo da folha.</li>
+    </ol>
+  </section>
+
+  <section class="tela">
+    <h2>Perguntas frequentes</h2>
+    <h3>O colaborador bateu o ponto duas vezes seguidas. E agora?</h3>
+    <p>Em Tratamento de Batidas, <strong>desconsidere</strong> a duplicada com o motivo “Marcação duplicada”. Ela continua gravada, mas sai da apuração.</p>
+    <h3>A saída das 02:00 caiu no dia errado.</h3>
+    <p>Altere a <strong>data de referência</strong> da batida para o dia anterior (“Saída de um turno que começou na véspera”).</p>
+    <h3>Alguém começou hoje e aparece com faltas nos dias anteriores.</h3>
+    <p>Confira a data de admissão e o campo <strong>Controlar ponto a partir de</strong> no cadastro do colaborador.</p>
+    <h3>Mudei a jornada e o banco de horas mudou.</h3>
+    <p>É esperado: alterar uma jornada recalcula os dias já encerrados de quem a usa. Para valer só daqui para a frente, troque a jornada no cadastro do colaborador com a data de vigência.</p>
+    <h3>Não consigo alterar uma batida de outubro.</h3>
+    <p>O período provavelmente está fechado (aparece um cadeado). Reabra em Fechamento de Período, ajuste e feche de novo.</p>
+    <h3>O gestor não vê um colaborador.</h3>
+    <p>O perfil Gestor enxerga só a <strong>equipe</strong>: confira se o colaborador tem esse gestor no cadastro e se o usuário do gestor está ligado ao cadastro de colaborador dele.</p>
+    <h3>A batida ficou “fora do local”. Ela vale?</h3>
+    <p>Vale. O ponto nunca é bloqueado; a marcação só fica sinalizada para conferência em Quebra de Regras.</p>
+  </section>
+
+  <section class="tela">
+    <h2>Glossário</h2>
+    <table>
+      <tbody>
+        <tr><td style="width:24%"><strong>Abono</strong></td><td>Tempo de ausência que não é descontado (não vira falta nem débito).</td></tr>
+        <tr><td><strong>Apuração</strong></td><td>O cálculo do dia: previsto, trabalhado, atraso, extra, noturno e saldo.</td></tr>
+        <tr><td><strong>Batida / marcação</strong></td><td>Cada registro de ponto. E1, S1, E2, S2 = entrada e saída de cada turno.</td></tr>
+        <tr><td><strong>Competência</strong></td><td>O mês de referência da folha de pagamento.</td></tr>
+        <tr><td><strong>DSR</strong></td><td>Descanso semanal remunerado.</td></tr>
+        <tr><td><strong>Interjornada</strong></td><td>Descanso entre o fim de um dia e o início do próximo (mínimo 11h).</td></tr>
+        <tr><td><strong>Intrajornada</strong></td><td>O intervalo para refeição e descanso dentro do dia.</td></tr>
+        <tr><td><strong>Marcação ímpar</strong></td><td>Dia com uma batida sem o par (entrada sem saída ou o contrário).</td></tr>
+        <tr><td><strong>Portaria 671</strong></td><td>Norma do MTE sobre registro de ponto: batidas originais não podem ser apagadas e o registro não pode ser impedido.</td></tr>
+        <tr><td><strong>Saldo do dia</strong></td><td>Trabalhado + abonado − previsto, já com as tolerâncias.</td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+</body>
+</html>

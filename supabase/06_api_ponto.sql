@@ -135,7 +135,9 @@ begin
                  'entrada', to_char(jd.entrada, 'HH24:MI'),
                  'saida_intervalo', to_char(jd.saida_intervalo, 'HH24:MI'),
                  'retorno_intervalo', to_char(jd.retorno_intervalo, 'HH24:MI'),
-                 'saida', to_char(jd.saida, 'HH24:MI'))
+                 'saida', to_char(jd.saida, 'HH24:MI'),
+                 'intervalo_flexivel', jd.intervalo_flexivel,
+                 'intervalo_min', fn_minutos(jd.saida_intervalo, jd.retorno_intervalo))
           from fn_jornada_dia(c.id, v_hoje) jd
          where jd.jornada_id is not null)),
     'saldo_banco_min', (select coalesce(sum(minutos), 0) from banco_horas where colaborador_id = c.id),
@@ -539,18 +541,32 @@ begin
       from fn_batidas_periodo(p_ini, p_fim, p_colaborador) b
      where b.colaborador_id in (select id from _bh_col) and b.status = 'valida';
 
-  -- Marcações previstas dos dias com previsão (feriado, folga e abono não têm)
+  -- Marcações previstas dos dias com previsão (feriado, folga e abono não têm).
+  -- Intervalo flexível: a saída para o intervalo prevista é a real, e o retorno previsto é ela + a duração.
   drop table if exists pg_temp._bh_prev;
   create temp table _bh_prev on commit drop as
+    select x.colaborador_id, x.data, x.sentido, x.turno,
+           case when x.flex and x.s1 is not null then x.ts_flex::time else x.hora end as hora,
+           case when x.flex and x.s1 is not null then x.ts_flex else x.ts end as ts
+      from (
     select a.colaborador_id, a.data, v.sentido, v.turno, v.hora,
-           a.data + v.hora + case when v.hora < jd.entrada then interval '1 day' else interval '0' end as ts
+           a.data + v.hora + case when v.hora < jd.entrada then interval '1 day' else interval '0' end as ts,
+           (jd.intervalo_flexivel and (v.sentido, v.turno) in (('S', 1), ('E', 2))) as flex,
+           s1.local as s1,
+           s1.local + case when v.sentido = 'E'
+                           then make_interval(mins => fn_minutos(jd.saida_intervalo, jd.retorno_intervalo))
+                           else interval '0' end as ts_flex
       from _bh_ap a
      cross join lateral fn_jornada_dia(a.colaborador_id, a.data) jd
+      left join lateral (select min(b.local) as local from _bh_bat b
+                          where jd.intervalo_flexivel and b.colaborador_id = a.colaborador_id and b.data = a.data
+                            and b.sentido = 'S' and b.turno = 1) s1 on true
      cross join lateral (values ('E', 1, jd.entrada),
                                 ('S', 1, coalesce(jd.saida_intervalo, jd.saida)),
                                 ('E', 2, jd.retorno_intervalo),
                                 ('S', 2, case when jd.saida_intervalo is not null then jd.saida end)) v(sentido, turno, hora)
-     where a.previsto_min > 0 and v.hora is not null;
+     where a.previsto_min > 0 and v.hora is not null
+      ) x;
 
   -- Turnos do dia: previsto, realizado e se fechou (entrada e saída)
   drop table if exists pg_temp._bh_tur;

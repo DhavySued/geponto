@@ -1,3 +1,4 @@
+import { formatMinutos } from './format';
 import type { Jornada, JornadaDia } from './types';
 
 export const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -96,6 +97,7 @@ export function novaJornada(): Jornada {
     ciclo_dias: null,
     data_base: null,
     ativo: true,
+    intervalo_flexivel: false,
     dias: DIAS_SEMANA.map((_, i) => ({
       dia_semana: i,
       folga: i === 0 || i === 6,
@@ -107,8 +109,12 @@ export function novaJornada(): Jornada {
   };
 }
 
-export function horarioTexto(d: JornadaDia): string {
+export function horarioTexto(d: JornadaDia, intervaloFlexivel = false): string {
   if (d.folga) return 'Folga';
+  if (d.saida_intervalo && intervaloFlexivel) {
+    const min = minutosEntre(d.saida_intervalo, d.retorno_intervalo) ?? 0;
+    return `${d.entrada}–${d.saida} · intervalo flexível de ${formatMinutos(min)}`;
+  }
   const partes = d.saida_intervalo
     ? `${d.entrada}–${d.saida_intervalo} · ${d.retorno_intervalo}–${d.saida}`
     : `${d.entrada}–${d.saida}`;
@@ -116,12 +122,12 @@ export function horarioTexto(d: JornadaDia): string {
 }
 
 /** Agrupa dias consecutivos com o mesmo horário: "Seg–Qui 08:00–12:00 · 13:00–18:00". */
-export function resumoEscala(dias: JornadaDia[]): { dias: string; horario: string }[] {
+export function resumoEscala(dias: JornadaDia[], intervaloFlexivel = false): { dias: string; horario: string }[] {
   // Começa na segunda para a leitura ficar natural (Seg … Dom)
   const ordem = [1, 2, 3, 4, 5, 6, 0].map((i) => dias.find((d) => d.dia_semana === i)).filter(Boolean) as JornadaDia[];
   const grupos: { ini: number; fim: number; horario: string }[] = [];
   for (const d of ordem) {
-    const h = horarioTexto(d);
+    const h = horarioTexto(d, intervaloFlexivel);
     const ultimo = grupos[grupos.length - 1];
     if (ultimo && ultimo.horario === h) ultimo.fim = d.dia_semana;
     else grupos.push({ ini: d.dia_semana, fim: d.dia_semana, horario: h });

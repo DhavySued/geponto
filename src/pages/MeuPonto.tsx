@@ -119,7 +119,8 @@ export default function MeuPonto() {
             {jd && !jd.folga && (
               <span className="tabular-nums">
                 Hoje: {jd.entrada}
-                {jd.saida_intervalo && ` – ${jd.saida_intervalo} · ${jd.retorno_intervalo}`} – {jd.saida}
+                {jd.saida_intervalo && !jd.intervalo_flexivel && ` – ${jd.saida_intervalo} · ${jd.retorno_intervalo}`} – {jd.saida}
+                {jd.intervalo_flexivel && jd.intervalo_min != null && ` · intervalo flexível de ${formatMinutos(jd.intervalo_min)}`}
               </span>
             )}
             {jd?.folga && <span>Hoje é sua folga</span>}

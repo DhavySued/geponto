@@ -14,8 +14,8 @@ import type { Jornada } from '@/lib/types';
 function JornadaCard({ j, onAbrir }: { j: Jornada; onAbrir: () => void }) {
   const ehEscala = j.tipo === 'escala';
   const escala = ehEscala
-    ? j.dias.filter((d) => !d.folga).slice(0, 3).map((d) => ({ dias: `Dia ${d.dia_semana + 1}`, horario: horarioTexto(d) }))
-    : resumoEscala(j.dias);
+    ? j.dias.filter((d) => !d.folga).slice(0, 3).map((d) => ({ dias: `Dia ${d.dia_semana + 1}`, horario: horarioTexto(d, j.intervalo_flexivel) }))
+    : resumoEscala(j.dias, j.intervalo_flexivel);
   return (
     <button
       onClick={onAbrir}
@@ -31,6 +31,7 @@ function JornadaCard({ j, onAbrir }: { j: Jornada; onAbrir: () => void }) {
         </div>
         <div className="flex shrink-0 gap-1.5">
           {ehEscala && <Badge tone="violet" dot={false}>Escala {j.dias.length}d</Badge>}
+          {j.intervalo_flexivel && <Badge tone="blue" dot={false}>Intervalo flexível</Badge>}
           {j.ativo ? <Badge tone="green">Ativa</Badge> : <Badge tone="slate">Inativa</Badge>}
         </div>
       </div>
@@ -50,7 +51,7 @@ function JornadaCard({ j, onAbrir }: { j: Jornada; onAbrir: () => void }) {
                 'flex h-7 flex-1 items-center justify-center rounded-md text-[10px] font-medium',
                 d.folga ? 'bg-slate-100 text-slate-400' : 'bg-primary-700 text-white',
               )}
-              title={d.folga ? 'Folga' : horarioTexto(d)}
+              title={d.folga ? 'Folga' : horarioTexto(d, j.intervalo_flexivel)}
             >
               {d.dia_semana + 1}
             </span>

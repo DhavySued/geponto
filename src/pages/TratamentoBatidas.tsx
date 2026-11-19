@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { AlertTriangle, Fingerprint, MoreHorizontal, Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BatidaChip, LegendaBatidas, STATUS_BATIDA } from '@/components/tratamento/BatidaChip';
 import { useAcoesBatida } from '@/components/tratamento/useAcoesBatida';
 import { Button } from '@/components/ui/Button';
@@ -32,6 +32,9 @@ export default function TratamentoBatidas() {
   const [lista, setLista] = useState<BatidaTratamento[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  // Cada mudança de filtro dispara uma pesquisa: só a mais recente pode preencher a lista
+  // (senão a resposta lenta de "todos os empregados" chega depois e sobrescreve a filtrada).
+  const ultimaPesquisa = useRef(0);
 
   useEffect(() => {
     api<TratamentoAux>('api_tratamento_auxiliares')
@@ -40,22 +43,22 @@ export default function TratamentoBatidas() {
   }, []);
 
   const pesquisar = useCallback(async () => {
+    const id = ++ultimaPesquisa.current;
     setCarregando(true);
     try {
       setErro(null);
-      setLista(
-        await api<BatidaTratamento[]>('api_tratamento_batidas', {
-          p_ini: filtros.ini,
-          p_fim: filtros.fim,
-          p_colaborador: filtros.colaborador || null,
-          p_departamento: filtros.departamento || null,
-          p_status: filtros.status,
-        }),
-      );
+      const r = await api<BatidaTratamento[]>('api_tratamento_batidas', {
+        p_ini: filtros.ini,
+        p_fim: filtros.fim,
+        p_colaborador: filtros.colaborador || null,
+        p_departamento: filtros.departamento || null,
+        p_status: filtros.status,
+      });
+      if (id === ultimaPesquisa.current) setLista(r);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Erro ao pesquisar.');
+      if (id === ultimaPesquisa.current) setErro(e instanceof Error ? e.message : 'Erro ao pesquisar.');
     } finally {
-      setCarregando(false);
+      if (id === ultimaPesquisa.current) setCarregando(false);
     }
   }, [filtros]);
 
