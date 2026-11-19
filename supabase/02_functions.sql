@@ -521,7 +521,8 @@ returns table (
   atraso_bruto_min            integer,
   saida_antecipada_bruta_min  integer,
   falta_bruta                 boolean,   -- dia previsto, encerrado e sem batidas (antes de qualquer abono)
-  abono_justificativa_min     integer    -- minutos abonados por justificativas (atraso, saída e falta)
+  abono_justificativa_min     integer,   -- minutos abonados por justificativas (atraso, saída e falta)
+  falta_folha                 boolean    -- falta levada para a folha (não debitada do banco de horas)
 )
 language sql stable set search_path = public as $$
 with cfg as (
@@ -570,7 +571,8 @@ base as (
          -- Justificativas que abonam (minutos null = abona tudo)
          ja.id is not null as ja_abona, ja.minutos as ja_min,
          js.id is not null as js_abona, js.minutos as js_min,
-         jf.id is not null as jf_abona, jf.minutos as jf_min
+         jf.id is not null as jf_abona, jf.minutos as jf_min,
+         ff.colaborador_id is not null as falta_folha_marcada
     from dias dd
     left join jornadas j      on j.id = dd.jornada_id
     left join jornada_dias jd on jd.jornada_id = dd.jornada_id
@@ -605,6 +607,7 @@ base as (
                                and js.tipo = 'saida_antecipada' and js.abona
     left join justificativas jf on jf.colaborador_id = dd.colaborador_id and jf.data = dd.data
                                and jf.tipo = 'falta' and jf.abona
+    left join faltas_folha ff   on ff.colaborador_id = dd.colaborador_id and ff.data = dd.data
 ),
 -- Sentido efetivo de cada batida (fn_batidas_periodo: declarado pelo RH ou sequência automática).
 -- Inclui o dia anterior ao período para calcular a interjornada do primeiro dia.
@@ -799,14 +802,16 @@ select f.colaborador_id,
        case when coalesce(f.hora_noturna_reduzida, true) then round(f.noturno * 60 / 52.5)::int else f.noturno end,
        case when f.pares > 1 then f.pausa end,
        f.interjornada,
-       f.usa_bh,
+       -- Falta levada para a folha: o dia sai do banco (vai para a folha como falta)
+       f.usa_bh and not (f.falta_folha_marcada and f.e_falta),
        f.feriado,
        f.fechado,
        f.escala,
        f.atraso_bruto,
        f.antecipada_bruta,
        f.falta_bruta,
-       f.abono_atraso + f.abono_antecipada + f.abono_falta
+       f.abono_atraso + f.abono_antecipada + f.abono_falta,
+       f.falta_folha_marcada and f.e_falta
   from fin f;
 $$;
 
@@ -931,6 +936,11 @@ drop trigger if exists trg_escalas_reprocessar on escalas;
 create trigger trg_escalas_reprocessar after insert or update or delete on escalas
   for each row execute function fn_escalas_reprocessar();
 
+-- Falta levada para a folha (ou devolvida ao banco) → recalcula o dia
+drop trigger if exists trg_faltas_folha_reprocessar on faltas_folha;
+create trigger trg_faltas_folha_reprocessar after insert or update or delete on faltas_folha
+  for each row execute function fn_escalas_reprocessar();
+
 -- Justificativa lançada/alterada/removida → recalcula o dia (mesma regra da escala)
 drop trigger if exists trg_justificativas_reprocessar on justificativas;
 create trigger trg_justificativas_reprocessar after insert or update or delete on justificativas
@@ -974,12 +984,12 @@ begin
        or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
       raise exception 'O dia % está em um período fechado.', to_char(coalesce(new.data, old.data), 'DD/MM/YYYY');
     end if;
-  elsif tg_table_name in ('escalas', 'justificativas') then
+  elsif tg_table_name in ('escalas', 'justificativas', 'faltas_folha') then
     if tg_op <> 'INSERT' and fn_periodo_fechado(old.data)
        or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
       raise exception 'O dia % está em um período fechado. Reabra o período para alterar %.',
         to_char(coalesce(new.data, old.data), 'DD/MM/YYYY'),
-        case tg_table_name when 'escalas' then 'a escala' else 'a justificativa' end;
+        case tg_table_name when 'escalas' then 'a escala' when 'faltas_folha' then 'a falta' else 'a justificativa' end;
     end if;
   end if;
   return coalesce(new, old);
@@ -995,6 +1005,10 @@ create trigger trg_ausencias_fechamento before insert or update or delete on aus
 
 drop trigger if exists trg_escalas_fechamento on escalas;
 create trigger trg_escalas_fechamento before insert or update or delete on escalas
+  for each row execute function fn_bloquear_periodo_fechado();
+
+drop trigger if exists trg_faltas_folha_fechamento on faltas_folha;
+create trigger trg_faltas_folha_fechamento before insert or update or delete on faltas_folha
   for each row execute function fn_bloquear_periodo_fechado();
 
 drop trigger if exists trg_justificativas_fechamento on justificativas;
@@ -1126,7 +1140,23 @@ begin
           select c.id, c.nome, c.matricula, c.situacao,
                  d.nome as departamento, cg.nome as cargo,
                  to_char(jd.entrada, 'HH24:MI') as entrada_prevista,
+                 -- Marcações previstas do dia (E1, S1, E2, S2); no intervalo flexível, só a duração
+                 case when a.previsto_min > 0 and jd.entrada is not null then
+                   (select coalesce(jsonb_agg(jsonb_build_object('sigla', v.sigla, 'hora', to_char(v.hora, 'HH24:MI'))
+                                              order by v.o), '[]'::jsonb)
+                      from (values (1, 'E1', jd.entrada),
+                                   (2, 'S1', case when not jd.intervalo_flexivel then jd.saida_intervalo end),
+                                   (3, 'E2', case when not jd.intervalo_flexivel then jd.retorno_intervalo end),
+                                   (4, case when jd.saida_intervalo is null then 'S1' else 'S2' end, jd.saida)) v(o, sigla, hora)
+                     where v.hora is not null)
+                 end as previstas,
+                 case when jd.intervalo_flexivel then fn_minutos(jd.saida_intervalo, jd.retorno_intervalo) end
+                   as intervalo_flexivel_min,
                  a.atraso_min,
+                 -- Saldo do banco de horas até hoje (lançamentos automáticos e manuais)
+                 (select coalesce(sum(bh.minutos), 0)::int from banco_horas bh
+                   where bh.colaborador_id = c.id and bh.data <= v_hoje) as saldo_banco_min,
+                 a.banco_horas as usa_banco,
                  fn_batidas_json(c.id, v_hoje) as batidas,   -- definida em 06_api_ponto.sql
                  st.status,
                  case st.status

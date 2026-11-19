@@ -916,6 +916,18 @@ create trigger trg_justificativas_updated before update on justificativas
   for each row execute function fn_set_updated_at();
 
 -- -----------------------------------------------------------------------------
+-- Falta levada para a folha: para quem tem banco de horas, o dia de falta (sem batidas) não é
+-- debitado do banco; vai para a folha como 1 dia de falta (e o DSR da semana).
+-- -----------------------------------------------------------------------------
+create table if not exists faltas_folha (
+  colaborador_id  uuid not null references colaboradores(id) on delete cascade,
+  data            date not null,
+  usuario_id      uuid references usuarios(id) on delete set null,
+  created_at      timestamptz not null default now(),
+  primary key (colaborador_id, data)
+);
+
+-- -----------------------------------------------------------------------------
 -- Row Level Security
 -- RLS ligado em TODAS as tabelas e nenhuma policy para anon/authenticated:
 -- a chave pública não lê nem grava tabelas diretamente. Todo acesso passa
@@ -948,6 +960,7 @@ alter table perfis_eventos        enable row level security;
 alter table perfil_evento_he      enable row level security;
 alter table escalas               enable row level security;
 alter table justificativas        enable row level security;
+alter table faltas_folha          enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;

@@ -628,6 +628,9 @@ begin
                             'trabalhado_min', a.trabalhado_min,
                             'saldo_dia', a.saldo_min,
                             'vai_para_banco', a.banco_horas,
+                            'falta', a.falta,
+                            'falta_folha', a.falta_folha,
+                            'fechado', a.fechado,
                             'banco_dia', coalesce(mv.minutos, 0),
                             'acumulado', s.anterior + coalesce((select sum(m2.minutos) from _bh_mov m2
                                                                  where m2.colaborador_id = c.id and m2.data <= a.data), 0),
@@ -831,4 +834,38 @@ grant execute on function api_banco_horas_conversoes(text, date, date) to anon, 
 grant execute on function api_banco_horas_conversao_estornar(text, uuid) to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST)
+notify pgrst, 'reload schema';
+
+-- -----------------------------------------------------------------------------
+-- Falta levada para a folha (quem tem banco de horas): o dia de falta sai do banco
+-- e vai para a folha como 1 dia de falta. p_folha = false devolve a falta ao banco.
+-- -----------------------------------------------------------------------------
+create or replace function api_banco_horas_falta_folha(p_token text, p_colaborador uuid, p_data date, p_folha boolean)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_usuario uuid := fn_auth(p_token, 'banco_horas', true);
+  a record;
+begin
+  if p_colaborador is null or p_data is null then raise exception 'Informe o colaborador e o dia.'; end if;
+  if not fn_visivel(p_colaborador) then
+    raise exception 'Colaborador fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+  if not coalesce(p_folha, false) then
+    delete from faltas_folha where colaborador_id = p_colaborador and data = p_data;
+    return jsonb_build_object('ok', true);
+  end if;
+  select x.falta, x.banco_horas, x.falta_folha into a from fn_apuracao(p_data, p_data, p_colaborador) x;
+  if not found or not coalesce(a.falta, false) then
+    raise exception 'O dia % não é falta: só a falta (dia sem batidas) pode ir para a folha.', to_char(p_data, 'DD/MM/YYYY');
+  end if;
+  if not a.banco_horas and not a.falta_folha then
+    raise exception 'Este colaborador não usa banco de horas: a falta já vai para a folha.';
+  end if;
+  insert into faltas_folha (colaborador_id, data, usuario_id) values (p_colaborador, p_data, v_usuario)
+  on conflict (colaborador_id, data) do nothing;
+  return jsonb_build_object('ok', true);
+end $$;
+
+grant execute on function api_banco_horas_falta_folha(text, uuid, date, boolean) to anon, authenticated;
+
 notify pgrst, 'reload schema';

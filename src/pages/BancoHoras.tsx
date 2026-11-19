@@ -175,7 +175,8 @@ function notaDoDia(d: BancoHorasDia): string | null {
   const partes: string[] = [];
   if (d.ocorrencia === 'em_andamento') partes.push('Dia em andamento: o saldo é apurado no fim do dia');
   else if (d.saldo_dia === 0 && soma !== 0) partes.push('Dentro da tolerância diária');
-  if (d.saldo_dia !== 0 && !d.vai_para_banco) partes.push('Saldo vai para a folha (jornada sem banco de horas)');
+  if (d.falta_folha) partes.push('Falta levada para a folha: não foi debitada do banco e vai no arquivo da folha como 1 dia de falta');
+  else if (d.saldo_dia !== 0 && !d.vai_para_banco) partes.push('Saldo vai para a folha (jornada sem banco de horas)');
   if (d.lancamentos?.length) partes.push('Saldo inclui os lançamentos manuais do dia');
   return partes.join(' · ') || null;
 }
@@ -296,10 +297,13 @@ function SecaoDia({
   dia,
   podeEditar,
   onExcluir,
+  onFaltaFolha,
 }: {
   dia: BancoHorasDia;
   podeEditar: boolean;
   onExcluir: (id: string) => void;
+  /** Leva a falta para a folha (true) ou devolve ao banco (false) */
+  onFaltaFolha: (folha: boolean) => void;
 }) {
   const oc = ocorrencia(dia.ocorrencia);
   const nota = notaDoDia(dia);
@@ -320,8 +324,30 @@ function SecaoDia({
           <span className="tabular-nums">{dataBR(dia.data)}</span>
         </span>
         <span className="text-xs tabular-nums text-white/70">{dia.horario_previsto ?? 'Sem horário previsto'}</span>
-        <span className="ml-auto rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-medium">{oc.label}</span>
+        <span className="ml-auto rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-medium">
+          {dia.falta_folha ? 'Falta (na folha)' : oc.label}
+        </span>
       </div>
+
+      {/* Falta de quem tem banco de horas: debitar do banco ou levar para a folha */}
+      {dia.falta && (dia.vai_para_banco || dia.falta_folha) && (
+        <div className={clsx('flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 text-xs print:hidden',
+          dia.falta_folha ? 'bg-sky-50 text-sky-800' : 'bg-rose-50 text-rose-800')}>
+          <span className="flex-1">
+            {dia.falta_folha
+              ? 'Esta falta vai para a folha como 1 dia de falta e não foi debitada do banco de horas.'
+              : `Falta sem batidas: ${formatMinutos(dia.previsto_min)} debitadas do banco de horas.`}
+          </span>
+          {podeEditar && !dia.fechado && (
+            <button
+              onClick={() => onFaltaFolha(!dia.falta_folha)}
+              className="rounded-lg bg-white px-2.5 py-1 font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
+            >
+              {dia.falta_folha ? 'Voltar para o banco de horas' : 'Levar para a folha (1 falta)'}
+            </button>
+          )}
+        </div>
+      )}
 
       <table className="w-full border-collapse text-xs">
         <thead>
@@ -452,6 +478,16 @@ export default function BancoHoras() {
   };
   const recarregar = () => filtro && consultar(filtro);
 
+  const faltaFolha = async (colaborador: string, data: string, folha: boolean) => {
+    try {
+      await api('api_banco_horas_falta_folha', { p_colaborador: colaborador, p_data: data, p_folha: folha });
+      toast(folha ? 'Falta levada para a folha: o dia saiu do banco de horas.' : 'Falta devolvida ao banco de horas.');
+      recarregar();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Erro ao alterar a falta.', 'erro');
+    }
+  };
+
   const confirmarExclusao = async () => {
     if (!excluir) return;
     try {
@@ -577,7 +613,8 @@ export default function BancoHoras() {
             ) : (
               <div className="space-y-3 px-4 pb-4">
                 {c.dias.map((d) => (
-                  <SecaoDia key={d.data} dia={d} podeEditar={podeEditar} onExcluir={setExcluir} />
+                  <SecaoDia key={d.data} dia={d} podeEditar={podeEditar} onExcluir={setExcluir}
+                    onFaltaFolha={(folha) => faltaFolha(c.id, d.data, folha)} />
                 ))}
               </div>
             )}

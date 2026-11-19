@@ -57,7 +57,14 @@ export interface RegistroHoje {
   departamento: string | null;
   cargo: string | null;
   entrada_prevista: string | null;
+  /** Marcações previstas do dia (E1, S1, E2, S2); null sem previsão */
+  previstas: { sigla: string; hora: string }[] | null;
+  /** Jornada com intervalo flexível: duração do intervalo */
+  intervalo_flexivel_min: number | null;
   atraso_min: number;
+  /** Saldo do banco de horas até hoje */
+  saldo_banco_min: number;
+  usa_banco: boolean;
   batidas: BatidaResumo[];
   status: StatusHoje;
 }
@@ -430,6 +437,11 @@ export interface BancoHorasDia {
   /** Saldo apurado do dia (já com a tolerância diária) */
   saldo_dia: number;
   vai_para_banco: boolean;
+  /** Dia sem batidas, com previsão */
+  falta?: boolean;
+  /** Falta levada para a folha: não foi debitada do banco */
+  falta_folha?: boolean;
+  fechado?: boolean;
   /** Tudo que entrou no banco no dia (automático + manuais) */
   banco_dia: number;
   /** Saldo do banco ao fim do dia */

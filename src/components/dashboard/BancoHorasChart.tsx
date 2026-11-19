@@ -34,6 +34,10 @@ export function BancoHorasChart({ dados }: { dados: SaldoColaborador[] }) {
         ...ordenados.filter((d) => d.saldo_minutos < 0).slice(-LIMITE_INICIAL / 2),
       ];
   const max = Math.max(...comSaldo.map((d) => Math.abs(d.saldo_minutos)), 60);
+  const positivos = comSaldo.filter((d) => d.saldo_minutos > 0);
+  const negativos = comSaldo.filter((d) => d.saldo_minutos < 0);
+  const somaPos = positivos.reduce((s, d) => s + d.saldo_minutos, 0);
+  const somaNeg = negativos.reduce((s, d) => s + d.saldo_minutos, 0);
 
   return (
     <div>
@@ -104,6 +108,26 @@ export function BancoHorasChart({ dados }: { dados: SaldoColaborador[] }) {
           {verTodos ? 'Mostrar apenas os extremos' : `Ver todos os ${ordenados.length} colaboradores`}
         </button>
       ) : null}
+
+      {/* Total de todos os colaboradores com saldo (não só os exibidos) */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-slate-100 px-2 pt-3 text-sm">
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: COR_POSITIVO }} />
+            Positivo <strong className="font-semibold tabular-nums text-slate-700">{formatMinutos(somaPos, true)}</strong>
+            ({positivos.length})
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: COR_NEGATIVO }} />
+            Negativo <strong className="font-semibold tabular-nums text-slate-700">{formatMinutos(somaNeg, true)}</strong>
+            ({negativos.length})
+          </span>
+        </div>
+        <span className="flex items-baseline gap-2">
+          <span className="text-xs font-medium text-slate-500">Saldo total</span>
+          <span className="text-base font-semibold tabular-nums text-slate-900">{formatMinutos(somaPos + somaNeg, true)}</span>
+        </span>
+      </div>
     </div>
   );
 }

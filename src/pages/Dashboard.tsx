@@ -1,6 +1,6 @@
 import clsx from 'clsx';
-import { AlarmClock, AlertTriangle, Hourglass, RefreshCw, UserCheck, UserX } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AlarmClock, AlertTriangle, RefreshCw, UserCheck, UserX } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { AbsenteismoChart } from '@/components/dashboard/AbsenteismoChart';
 import { BancoHorasChart } from '@/components/dashboard/BancoHorasChart';
 import { KpiCard, KpiSkeleton } from '@/components/dashboard/KpiCard';
@@ -115,10 +115,6 @@ function DashboardGeral() {
   };
 
   const r = dados?.resumo;
-  const saldoLiquido = useMemo(
-    () => (r ? r.banco_horas.saldo_positivo + r.banco_horas.saldo_negativo : 0),
-    [r],
-  );
 
   return (
     <div className="space-y-6">
@@ -198,9 +194,9 @@ function DashboardGeral() {
       )}
 
       {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {!r ? (
-          Array.from({ length: 4 }, (_, i) => <KpiSkeleton key={i} />)
+          Array.from({ length: 3 }, (_, i) => <KpiSkeleton key={i} />)
         ) : (
           <>
             <KpiCard
@@ -243,23 +239,6 @@ function DashboardGeral() {
                   Tempo total de atraso ·{' '}
                   <strong className="font-medium text-slate-700">{numero(r.hoje.atrasados)} atrasados hoje</strong>
                 </span>
-              }
-            />
-            <KpiCard
-              icon={Hourglass}
-              titulo="Saldo do banco de horas"
-              valor={formatMinutos(saldoLiquido, true)}
-              rodape={
-                <div className="flex gap-4">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-sm bg-[#3b6fd8]" />
-                    {formatMinutos(r.banco_horas.saldo_positivo, true)} ({r.banco_horas.qtd_positivos})
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-sm bg-accent-500" />
-                    {formatMinutos(r.banco_horas.saldo_negativo, true)} ({r.banco_horas.qtd_negativos})
-                  </span>
-                </div>
               }
             />
           </>

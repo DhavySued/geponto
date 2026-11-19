@@ -40,6 +40,44 @@ function Batidas({ batidas }: { batidas: RegistroHoje['batidas'] }) {
   );
 }
 
+/** Marcações previstas do dia, com o atraso da entrada */
+function Previstas({ r }: { r: RegistroHoje }) {
+  if (!r.previstas?.length) return <span className="text-xs text-slate-400">Sem previsão</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {r.previstas.map((p) => (
+        <span key={p.sigla} className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-0.5 text-xs tabular-nums text-slate-500 border border-dashed border-slate-300">
+          <span className="text-[10px] font-semibold text-slate-400">{p.sigla}</span>
+          {p.hora}
+        </span>
+      ))}
+      {r.intervalo_flexivel_min != null && (
+        <span className="text-[11px] text-slate-400">intervalo flexível de {formatMinutos(r.intervalo_flexivel_min)}</span>
+      )}
+      {r.atraso_min > 0 && (
+        <span className="rounded-md bg-accent-50 px-1.5 py-0.5 text-[11px] font-medium text-accent-700">
+          atraso {formatMinutos(r.atraso_min)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Saldo do banco de horas do colaborador até hoje */
+function SaldoBanco({ r }: { r: RegistroHoje }) {
+  if (!r.usa_banco && r.saldo_banco_min === 0) return <span className="text-xs text-slate-300">—</span>;
+  return (
+    <span
+      className={clsx(
+        'font-semibold tabular-nums',
+        r.saldo_banco_min > 0 ? 'text-primary-600' : r.saldo_banco_min < 0 ? 'text-accent-700' : 'text-slate-400',
+      )}
+    >
+      {formatMinutos(r.saldo_banco_min, true)}
+    </span>
+  );
+}
+
 export function RegistrosHoje({ dados }: { dados: RegistroHoje[] }) {
   const [filtro, setFiltro] = useState('todos');
   const [busca, setBusca] = useState('');
@@ -117,8 +155,9 @@ export function RegistrosHoje({ dados }: { dados: RegistroHoje[] }) {
                 <tr className="text-left text-xs text-slate-400">
                   <th className="px-5 py-3 font-medium">Colaborador</th>
                   <th className="px-5 py-3 font-medium">Departamento</th>
-                  <th className="px-5 py-3 font-medium">Entrada prevista</th>
+                  <th className="px-5 py-3 font-medium">Previsões do dia</th>
                   <th className="px-5 py-3 font-medium">Marcações</th>
+                  <th className="px-5 py-3 text-right font-medium">Banco de horas</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                 </tr>
               </thead>
@@ -141,15 +180,13 @@ export function RegistrosHoje({ dados }: { dados: RegistroHoje[] }) {
                     </td>
                     <td className="px-5 py-3 text-slate-600">{r.departamento ?? '—'}</td>
                     <td className="px-5 py-3">
-                      <span className="tabular-nums text-slate-600">{r.entrada_prevista ?? '—'}</span>
-                      {r.atraso_min > 0 && (
-                        <span className="ml-2 rounded-md bg-accent-50 px-1.5 py-0.5 text-[11px] font-medium text-accent-700">
-                          +{formatMinutos(r.atraso_min)}
-                        </span>
-                      )}
+                      <Previstas r={r} />
                     </td>
                     <td className="px-5 py-3">
                       <Batidas batidas={r.batidas} />
+                    </td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">
+                      <SaldoBanco r={r} />
                     </td>
                     <td className="px-5 py-3">
                       <StatusHojeBadge status={r.status} />
@@ -167,14 +204,15 @@ export function RegistrosHoje({ dados }: { dados: RegistroHoje[] }) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-medium text-slate-800">{r.nome}</p>
-                    <p className="truncate text-xs text-slate-400">
-                      {r.departamento ?? `Mat. ${r.matricula}`}
-                      {r.entrada_prevista && ` · entrada ${r.entrada_prevista}`}
-                    </p>
+                    <p className="truncate text-xs text-slate-400">{r.departamento ?? `Mat. ${r.matricula}`}</p>
                   </div>
                   <StatusHojeBadge status={r.status} />
                 </div>
-                <Batidas batidas={r.batidas} />
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex gap-2"><span className="w-16 shrink-0 pt-0.5 text-slate-400">Previsto</span><Previstas r={r} /></div>
+                  <div className="flex gap-2"><span className="w-16 shrink-0 pt-0.5 text-slate-400">Batidas</span><Batidas batidas={r.batidas} /></div>
+                  <div className="flex gap-2"><span className="w-16 shrink-0 text-slate-400">Banco</span><SaldoBanco r={r} /></div>
+                </div>
               </li>
             ))}
           </ul>
