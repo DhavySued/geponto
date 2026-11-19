@@ -23,6 +23,7 @@ import Ocorrencias from '@/pages/Ocorrencias';
 import PerfisEventos from '@/pages/PerfisEventos';
 import Escalas from '@/pages/Escalas';
 import QuebraRegras from '@/pages/QuebraRegras';
+import LocaisBatidas from '@/pages/LocaisBatidas';
 import TotaisPeriodo from '@/pages/TotaisPeriodo';
 import TratamentoBatidas from '@/pages/TratamentoBatidas';
 import Usuarios from '@/pages/Usuarios';
@@ -71,6 +72,7 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   espelho_ponto: EspelhoPonto,
   totais_periodo: TotaisPeriodo,
   quebra_regras: QuebraRegras,
+  locais_batidas: LocaisBatidas,
   usuarios: Usuarios,
 };
 

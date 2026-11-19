@@ -29,7 +29,8 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('fechamento',         'Fechamento de Período',     'Movimentos', 78),
   ('espelho_ponto',      'Espelho de Ponto',          'Relatórios', 80),
   ('totais_periodo',     'Totais e Exportação p/ Folha', 'Relatórios', 82),
-  ('quebra_regras',      'Quebra de Regras',          'Relatórios', 84)
+  ('quebra_regras',      'Quebra de Regras',          'Relatórios', 84),
+  ('locais_batidas',     'Locais das Batidas',        'Relatórios', 86)
 on conflict (chave) do update
   set nome = excluded.nome, grupo = excluded.grupo, ordem = excluded.ordem;
 
@@ -86,7 +87,10 @@ select p.id, x.pagina, x.ver, x.editar
     ('Gestor', 'solicitacoes', true, true),
     ('Gestor', 'quebra_regras', true, false),
     ('Consulta', 'totais_periodo', true, false),
-    ('Consulta', 'quebra_regras', true, false)
+    ('Consulta', 'quebra_regras', true, false),
+    ('RH', 'locais_batidas', true, false),
+    ('Gestor', 'locais_batidas', true, false),
+    ('Consulta', 'locais_batidas', true, false)
   ) as x(perfil, pagina, ver, editar) on x.perfil = p.nome
 on conflict (perfil_id, pagina) do nothing;
 

@@ -19,7 +19,8 @@ export type PaginaChave =
   | 'solicitacoes'
   | 'fechamento'
   | 'totais_periodo'
-  | 'quebra_regras';
+  | 'quebra_regras'
+  | 'locais_batidas';
 
 export interface Usuario {
   id: string;
@@ -660,7 +661,36 @@ export interface HistoricoBatida {
 // ---------------------------------------------------------------------------
 export type TipoAusencia = 'falta_justificada' | 'atestado' | 'ferias' | 'folga' | 'afastamento' | 'abono';
 
+/** Relatório de locais das batidas */
+export interface LocalBatidaItem {
+  id: string;
+  data_hora: string;
+  data: string;
+  hora: string;
+  origem: string;
+  geo_status: GeoStatus;
+  geo_erro: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  precisao_m: number | null;
+  distancia_m: number | null;
+  /** Local de ponto mais próximo */
+  local: string | null;
+  colaborador_id: string;
+  nome: string;
+  matricula: string;
+  departamento: string | null;
+  /** Endereço já conhecido da coordenada (null = ainda não buscado) */
+  endereco: import('./enderecos').EnderecoGeo | null;
+}
+
+export interface LocaisBatidasRelatorio {
+  itens: LocalBatidaItem[];
+}
+
 export interface FiltrosAux {
+  /** Locais de ponto cadastrados */
+  locais?: { id: string; nome: string; ativo: boolean }[];
   empresa: { razao_social: string; nome_fantasia: string | null; cnpj: string | null } | null;
   colaboradores: {
     id: string;

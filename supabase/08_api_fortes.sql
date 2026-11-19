@@ -39,7 +39,7 @@ create or replace function api_filtros_auxiliares(p_token text)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_usuario uuid := fn_auth_alguma(p_token, array['ocorrencias', 'justificativas', 'solicitacoes', 'fechamento', 'espelho_ponto',
-                                                   'totais_periodo', 'quebra_regras', 'feriados', 'escalas']);
+                                                   'totais_periodo', 'quebra_regras', 'feriados', 'escalas', 'locais_batidas']);
 begin
   return jsonb_build_object(
     'empresa', (select jsonb_build_object('razao_social', razao_social, 'nome_fantasia', nome_fantasia, 'cnpj', cnpj)
@@ -54,6 +54,8 @@ begin
     'motivos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'descricao', descricao, 'aplicacao', aplicacao)
                                           order by descricao)
                            from motivos_batida where ativo), '[]'::jsonb),
+    'locais', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome, 'ativo', ativo) order by nome)
+                          from locais_ponto), '[]'::jsonb),
     'fechado_ate', (select max(data_fim) from fechamentos));
 end $$;
 

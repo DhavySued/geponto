@@ -28,12 +28,13 @@ No **SQL Editor** do Supabase, execute nesta ordem:
 | `supabase/08_api_fortes.sql` | Feriados, ocorrências em lote, escalas, fechamento, espelho, totais/folha e quebra de regras |
 | `supabase/09_api_usuarios.sql` | Usuários & Permissões (perfis, abrangência, acessos em lote), dashboard pessoal e registro rápido de ponto |
 | `supabase/10_api_justificativas.sql` | Justificativas de atraso, saída antecipada e falta (só justificar ou abonar tudo/parte) |
+| `supabase/11_api_locais_batidas.sql` | Endereço da localização das batidas e relatório de locais das batidas |
 | `supabase/99_admin.local.sql` | Usuário administrador (arquivo local, fora do Git) |
 
 Para remover os dados de exemplo, rode `supabase/limpar_dados_demo.sql`.
 
 Todos os scripts podem ser executados de novo sem erro. Para atualizar um banco existente, rode de novo
-01, 02, 03, 05, 06, 07, 08, 09 e 10, nesta ordem.
+01, 02, 03, 05, 06, 07, 08, 09, 10 e 11, nesta ordem.
 
 ### Acessos e permissões
 
