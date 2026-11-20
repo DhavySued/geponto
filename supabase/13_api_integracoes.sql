@@ -30,6 +30,8 @@ create table if not exists chaves_api (
 create index if not exists ix_chaves_api_empresa on chaves_api (empresa_id);
 
 alter table chaves_api enable row level security;
+drop trigger if exists trg_auditoria on chaves_api;
+create trigger trg_auditoria after insert or update or delete on chaves_api for each row execute function fn_auditar();
 revoke all on chaves_api from anon, authenticated;
 
 -- -----------------------------------------------------------------------------

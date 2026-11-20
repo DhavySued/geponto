@@ -222,7 +222,7 @@ export default function Login() {
 
             <div>
               <label htmlFor="login" className="label">
-                Usuário ou e-mail
+                Usuário, e-mail ou CPF
               </label>
               <div className="relative">
                 <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

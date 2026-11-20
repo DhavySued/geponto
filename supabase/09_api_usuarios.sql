@@ -21,7 +21,8 @@ begin
     'usuarios', coalesce((
       select jsonb_agg(jsonb_build_object(
                'id', u.id, 'nome', u.nome, 'login', u.login, 'email', u.email, 'status', u.status,
-               'perfil_id', u.perfil_id, 'perfil', p.nome, 'is_admin', p.is_admin, 'abrangencia', p.abrangencia,
+               'perfil_id', u.perfil_id, 'perfil', p.nome, 'is_admin', p.is_admin or u.administrador, 'abrangencia', p.abrangencia,
+               'administrador', u.administrador, 'perfil_admin', p.is_admin,
                'colaborador_id', u.colaborador_id, 'colaborador', c.nome, 'matricula', c.matricula,
                'empresas', coalesce((select jsonb_agg(ue.empresa_id) from usuario_empresas ue where ue.usuario_id = u.id), '[]'::jsonb),
                'empresa_colaborador', (select coalesce(e.nome_fantasia, e.razao_social) from empresas e where e.id = c.empresa_id),
@@ -69,20 +70,22 @@ create or replace function fn_exigir_admin_ativo()
 returns void language plpgsql stable set search_path = public as $$
 begin
   if not exists (select 1 from usuarios u join perfis p on p.id = u.perfil_id
-                  where p.is_admin and u.status = 'ativo') then
+                  where (p.is_admin or u.administrador) and u.status = 'ativo') then
     raise exception 'O sistema precisa ter ao menos um administrador ativo.';
   end if;
 end $$;
 
 -- Só um administrador mexe em quem é (ou passaria a ser) administrador. Sem esta regra, quem tem
 -- apenas "editar usuários" poderia redefinir a senha do administrador ou criar outro para si.
-create or replace function fn_exigir_admin_para(p_eu uuid, p_alvo uuid, p_novo_perfil uuid default null)
+drop function if exists fn_exigir_admin_para(uuid, uuid, uuid);
+create or replace function fn_exigir_admin_para(p_eu uuid, p_alvo uuid, p_novo_perfil uuid default null,
+                                                p_novo_admin boolean default false)
 returns void language plpgsql stable set search_path = public as $$
 begin
-  if exists (select 1 from usuarios u join perfis p on p.id = u.perfil_id where u.id = p_eu and p.is_admin) then
+  if fn_usuario_admin(p_eu) then
     return;
   end if;
-  if exists (select 1 from usuarios u join perfis p on p.id = u.perfil_id where u.id = p_alvo and p.is_admin)
+  if fn_usuario_admin(p_alvo) or coalesce(p_novo_admin, false)
      or exists (select 1 from perfis p where p.id = p_novo_perfil and p.is_admin) then
     raise exception 'Somente um administrador pode alterar acessos de administrador.' using errcode = '42501';
   end if;
@@ -102,10 +105,18 @@ declare
   v_status  status_usuario := coalesce(fn_txt(d, 'status'), 'ativo')::status_usuario;
   v_nome    text := fn_txt(d, 'nome');
   v_login   text := fn_txt(d, 'login');
+  v_admin   boolean := coalesce((d ->> 'administrador')::boolean, false);
 begin
   select * into v_perfil from perfis where id = nullif(d ->> 'perfil_id', '')::uuid;
   if not found then raise exception 'Selecione o perfil de acesso.'; end if;
-  perform fn_exigir_admin_para(v_eu, v_id, v_perfil.id);
+  -- Sem o campo (telas antigas), mantém o que o usuário já tinha
+  if not d ? 'administrador' and v_id is not null then
+    select administrador into v_admin from usuarios where id = v_id;
+  end if;
+  perform fn_exigir_admin_para(v_eu, v_id, v_perfil.id, v_admin);
+  if v_id = v_eu and v_admin is distinct from (select administrador from usuarios where id = v_id) then
+    raise exception 'Você não pode alterar o próprio acesso de administrador.';
+  end if;
   if v_colab is not null and v_nome is null then
     select nome into v_nome from colaboradores where id = v_colab;
   end if;
@@ -115,7 +126,7 @@ begin
   if v_senha is not null and length(v_senha) < 6 then
     raise exception 'A senha deve ter ao menos 6 caracteres.';
   end if;
-  if not v_perfil.is_admin and v_perfil.abrangencia <> 'todos' and v_colab is null then
+  if not v_perfil.is_admin and not v_admin and v_perfil.abrangencia <> 'todos' and v_colab is null then
     raise exception 'O perfil "%" mostra apenas os dados do próprio colaborador%. Vincule o usuário a um colaborador.',
       v_perfil.nome, case when v_perfil.abrangencia = 'equipe' then ' e da equipe dele' else '' end;
   end if;
@@ -124,22 +135,22 @@ begin
     raise exception 'Este colaborador já tem um usuário de acesso.';
   end if;
   -- Empresas de acesso: obrigatórias para quem não é administrador nem tem colaborador vinculado
-  if d ? 'empresas' and not v_perfil.is_admin and v_colab is null
+  if d ? 'empresas' and not v_perfil.is_admin and not v_admin and v_colab is null
      and jsonb_array_length(coalesce(d -> 'empresas', '[]'::jsonb)) = 0 then
     raise exception 'Selecione ao menos uma empresa que o usuário poderá acessar.';
   end if;
 
   if v_id is null then
     if v_senha is null then raise exception 'Defina a senha inicial do usuário.'; end if;
-    insert into usuarios (nome, login, email, senha_hash, perfil_id, colaborador_id, status, trocar_senha)
+    insert into usuarios (nome, login, email, senha_hash, perfil_id, colaborador_id, status, trocar_senha, administrador)
     values (v_nome, v_login, fn_txt(d, 'email'), fn_hash_senha(v_senha), v_perfil.id, v_colab, v_status,
-            coalesce((d ->> 'trocar_senha')::boolean, true))
+            coalesce((d ->> 'trocar_senha')::boolean, true), v_admin)
     returning id into v_id;
   else
     select * into v_old from usuarios where id = v_id for update;
     if not found then raise exception 'Usuário não encontrado.'; end if;
-    if v_id = v_eu and (v_old.perfil_id <> v_perfil.id or v_status <> 'ativo') then
-      raise exception 'Você não pode alterar o próprio perfil nem inativar o próprio acesso.';
+    if v_id = v_eu and (v_old.perfil_id <> v_perfil.id or v_status <> 'ativo' or v_old.administrador <> v_admin) then
+      raise exception 'Você não pode alterar o próprio perfil, o próprio acesso de administrador nem inativar o próprio acesso.';
     end if;
 
     update usuarios set
@@ -147,6 +158,7 @@ begin
       login = v_login,
       email = fn_txt(d, 'email'),
       perfil_id = v_perfil.id,
+      administrador = v_admin,
       colaborador_id = v_colab,
       status = v_status,
       senha_hash = coalesce(fn_hash_senha(v_senha), senha_hash),
@@ -157,7 +169,7 @@ begin
     where id = v_id;
 
     -- Senha nova, inativação ou troca de perfil derrubam as sessões abertas (exceto a minha)
-    if v_senha is not null or v_status <> 'ativo' or v_old.perfil_id <> v_perfil.id
+    if v_senha is not null or v_status <> 'ativo' or v_old.perfil_id <> v_perfil.id or v_old.administrador <> v_admin
        or v_old.colaborador_id is distinct from v_colab then
       delete from sessoes where usuario_id = v_id and (v_id <> v_eu or token_hash <> fn_hash_token(p_token));
     end if;
@@ -439,7 +451,8 @@ end $$;
 -- Permissões
 -- -----------------------------------------------------------------------------
 revoke execute on function fn_exigir_admin_ativo()                      from public, anon, authenticated;
-revoke execute on function fn_exigir_admin_para(uuid, uuid, uuid)       from public, anon, authenticated;
+revoke execute on function fn_exigir_admin_para(uuid, uuid, uuid, boolean) from public, anon, authenticated;
+revoke execute on function fn_usuario_admin(uuid)                       from public, anon, authenticated;
 revoke execute on function fn_visivel(uuid)                             from public, anon, authenticated;
 revoke execute on function fn_verificar_credenciais(text, text)         from public, anon, authenticated;
 
@@ -452,6 +465,53 @@ grant execute on function api_perfil_salvar(text, jsonb)                to anon,
 grant execute on function api_perfil_excluir(text, uuid)                to anon, authenticated;
 grant execute on function api_meu_dashboard(text, date, date)           to anon, authenticated;
 grant execute on function api_registrar_ponto_rapido(text, text, text, numeric, numeric, numeric, text, uuid) to anon, authenticated;
+
+-- -----------------------------------------------------------------------------
+-- Log e auditoria: consulta (mais recentes primeiro). Da empresa da sessão, mais os registros
+-- sem empresa (acessos e cadastros gerais).
+-- -----------------------------------------------------------------------------
+create or replace function api_auditoria_listar(
+  p_token text, p_ini date, p_fim date, p_tabela text default null, p_acao text default null,
+  p_usuario uuid default null, p_colaborador uuid default null, p_busca text default null, p_limite integer default 500)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_tz  text := fn_fuso();
+  v_emp uuid;
+  v_lim integer := least(greatest(coalesce(p_limite, 500), 1), 2000);
+  v_busca text := nullif(lower(trim(coalesce(p_busca, ''))), '');
+begin
+  perform fn_auth(p_token, 'auditoria');
+  v_emp := fn_empresa_atual();
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 366 then raise exception 'Selecione um período de até 1 ano.'; end if;
+  return jsonb_build_object(
+    'itens', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', a.id, 'data_hora', a.data_hora, 'usuario_id', a.usuario_id,
+               'usuario', coalesce(a.usuario_nome, case when a.acao = 'login_falha' then null else 'Sistema' end),
+               'tabela', a.tabela, 'registro_id', a.registro_id, 'acao', a.acao,
+               'colaborador_id', a.colaborador_id, 'colaborador', c.nome,
+               'descricao', a.descricao, 'campos', a.campos, 'antes', a.antes, 'depois', a.depois)
+             order by a.data_hora desc, a.id desc)
+        from (select a.* from auditoria a
+               where a.data_hora >= (p_ini::timestamp at time zone v_tz)
+                 and a.data_hora <  ((p_fim + 1)::timestamp at time zone v_tz)
+                 and (v_emp is null or a.empresa_id is null or a.empresa_id = v_emp)
+                 and (p_tabela is null or a.tabela = p_tabela)
+                 and (p_acao is null or a.acao = p_acao)
+                 and (p_usuario is null or a.usuario_id = p_usuario)
+                 and (p_colaborador is null or a.colaborador_id = p_colaborador)
+                 and (v_busca is null or lower(coalesce(a.descricao, '') || ' ' || coalesce(a.usuario_nome, '') || ' '
+                                                || coalesce(a.antes::text, '') || ' ' || coalesce(a.depois::text, '')) like '%' || v_busca || '%')
+               order by a.data_hora desc, a.id desc
+               limit v_lim) a
+        left join colaboradores c on c.id = a.colaborador_id), '[]'::jsonb),
+    'limite', v_lim,
+    'usuarios', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome) from usuarios), '[]'::jsonb),
+    'tabelas', coalesce((select jsonb_agg(distinct tabela) from auditoria), '[]'::jsonb));
+end $$;
+
+grant execute on function api_auditoria_listar(text, date, date, text, text, uuid, uuid, text, integer) to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST)
 notify pgrst, 'reload schema';

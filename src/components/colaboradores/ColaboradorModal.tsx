@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { ArrowRight, CalendarClock, History, KeyRound, Loader2, Plus } from 'lucide-react';
+import { ArrowRight, CalendarClock, Crosshair, History, KeyRound, Loader2, MapPin, MapPinned, Plus } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, SITUACAO } from '@/components/ui/Badge';
@@ -9,6 +9,8 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, toISODate } from '@/lib/format';
+import { localizarEndereco } from '@/lib/enderecos';
+import { linkMapa, obterLocalizacao, textoDistancia } from '@/lib/geo';
 import { mascaraCEP, mascaraCPF, mascaraPIS, mascaraTelefone } from '@/lib/mask';
 import { api } from '@/lib/api';
 import type {
@@ -17,13 +19,15 @@ import type {
   Colaborador,
   ColaboradorSituacao,
   HistoricoItem,
+  LocalPontoModo,
+  LocalPontoProprio,
   Opcao,
   SituacaoColaborador,
 } from '@/lib/types';
 
 const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
 
-type Aba = 'pessoais' | 'profissional' | 'endereco' | 'acesso' | 'historico';
+type Aba = 'pessoais' | 'profissional' | 'endereco' | 'local' | 'acesso' | 'historico';
 
 function vazio(): Colaborador {
   return {
@@ -32,7 +36,7 @@ function vazio(): Colaborador {
     empresa_id: '', cargo_id: '', departamento_id: '', jornada_id: '', perfil_evento_id: '', gestor_id: '',
     data_admissao: '', data_desligamento: '', situacao: 'ativo', salario: '', observacoes: '',
     // Novo colaborador: controle começa hoje, para não gerar faltas desde uma admissão antiga
-    controla_ponto: true, controle_ponto_inicio: toISODate(new Date()),
+    controla_ponto: true, controle_ponto_inicio: toISODate(new Date()), local_ponto_modo: 'empresa',
   };
 }
 
@@ -44,6 +48,8 @@ function doBanco(r: Record<string, unknown>): Colaborador {
   out.id = r.id;
   out.historico = r.historico;
   out.situacoes = r.situacoes;
+  out.local_ponto = r.local_ponto;
+  out.local_empresa = r.local_empresa;
   out.acesso = r.acesso;
   out.controla_ponto = r.controla_ponto !== false;
   out.cpf = mascaraCPF(String(out.cpf));
@@ -187,6 +193,147 @@ function Situacoes({ colaboradorId, itens, onFechar }: { colaboradorId: string; 
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+const MODOS_LOCAL: { valor: LocalPontoModo; titulo: string; descricao: string }[] = [
+  { valor: 'empresa', titulo: 'Local da empresa', descricao: 'Bate o ponto na empresa (padrão).' },
+  { valor: 'proprio', titulo: 'Local próprio', descricao: 'Só no local dele, ex.: home office.' },
+  { valor: 'ambos', titulo: 'Empresa ou local próprio', descricao: 'Vale qualquer um dos dois (regime híbrido).' },
+];
+
+/** Onde o colaborador pode bater o ponto (home office): salva à parte, como o acesso */
+function LocalPonto({
+  colaborador,
+  podeEditar,
+  onSalvo,
+}: {
+  colaborador: Colaborador;
+  podeEditar: boolean;
+  onSalvo: (modo: LocalPontoModo, local: LocalPontoProprio | null) => void;
+}) {
+  const toast = useToast();
+  const [modo, setModo] = useState<LocalPontoModo>(colaborador.local_ponto_modo ?? 'empresa');
+  const [lat, setLat] = useState(colaborador.local_ponto?.latitude != null ? String(colaborador.local_ponto.latitude) : '');
+  const [lng, setLng] = useState(colaborador.local_ponto?.longitude != null ? String(colaborador.local_ponto.longitude) : '');
+  const [raio, setRaio] = useState(String(colaborador.local_ponto?.raio_m ?? 150));
+  const [precisao, setPrecisao] = useState<number | null>(colaborador.local_ponto?.precisao_m ?? null);
+  const [buscando, setBuscando] = useState<'gps' | 'endereco' | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const endereco = [colaborador.logradouro, colaborador.numero, colaborador.bairro, colaborador.cidade, colaborador.uf].filter(Boolean).join(', ');
+  const emp = colaborador.local_empresa;
+  const coords = Number.isFinite(parseFloat(lat)) && Number.isFinite(parseFloat(lng));
+
+  const capturar = async () => {
+    setErro(null);
+    setBuscando('gps');
+    const g = await obterLocalizacao();
+    setBuscando(null);
+    if (g.p_latitude == null || g.p_longitude == null) {
+      return setErro(`${g.p_geo_erro ?? 'Não foi possível obter a localização'}. Permita o acesso à localização e tente de novo.`);
+    }
+    setLat(g.p_latitude.toFixed(6));
+    setLng(g.p_longitude.toFixed(6));
+    setPrecisao(g.p_precisao);
+    toast(`Localização capturada (precisão de ${textoDistancia(g.p_precisao ?? 0)}).`);
+  };
+
+  const buscarEndereco = async () => {
+    setErro(null);
+    if (!colaborador.logradouro && !colaborador.cep) return setErro('Preencha o endereço do colaborador (aba Endereço) para buscar no mapa.');
+    setBuscando('endereco');
+    try {
+      const r = await localizarEndereco(colaborador);
+      if (!r) return setErro('Endereço não encontrado no mapa. Confira o endereço ou digite as coordenadas.');
+      setLat(String(r.lat));
+      setLng(String(r.lng));
+      setPrecisao(null);
+      toast(r.exato ? 'Endereço localizado no mapa.' : 'Localização aproximada (rua ou bairro): confira no mapa e ajuste o raio.');
+    } catch {
+      setErro('Não foi possível consultar o mapa agora. Tente de novo ou digite as coordenadas.');
+    } finally {
+      setBuscando(null);
+    }
+  };
+
+  const salvar = async () => {
+    setErro(null);
+    if (modo !== 'empresa' && !coords) return setErro('Informe a localização do local próprio.');
+    setSalvando(true);
+    try {
+      const local = modo === 'empresa' ? null : {
+        latitude: parseFloat(lat), longitude: parseFloat(lng), raio_m: parseInt(raio, 10) || 150, precisao_m: precisao, endereco: endereco || null,
+      };
+      await api('api_colaborador_local_salvar', { p_colaborador: colaborador.id, p_dados: { modo, ...local } });
+      toast('Local de ponto salvo.');
+      onSalvo(modo, local);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Erro ao salvar o local.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3 rounded-xl bg-primary-50/60 p-4 text-sm text-primary-900">
+        <MapPinned className="mt-0.5 h-4 w-4 shrink-0 text-primary-600" />
+        <p>
+          Onde este colaborador pode registrar o ponto pelo sistema. Use o local próprio para home office: a batida feita lá
+          fica marcada como <strong className="font-semibold">no local</strong>.
+          {emp
+            ? ` Local da empresa: ${emp.nome} (raio de ${emp.raio_m} m)${emp.ativo ? '' : ', com as limitações de local desligadas na configuração'}.`
+            : ' A empresa ainda não tem local de ponto cadastrado.'}
+        </p>
+      </div>
+      <AlertaErro mensagem={erro} />
+      <fieldset disabled={!podeEditar} className="space-y-4">
+        <div className="grid gap-2 sm:grid-cols-3">
+          {MODOS_LOCAL.map((m) => (
+            <button key={m.valor} type="button" onClick={() => setModo(m.valor)}
+              className={clsx('rounded-xl p-3 text-left ring-1 transition', modo === m.valor ? 'bg-primary-50 ring-2 ring-primary-500' : 'ring-slate-200 hover:bg-slate-50')}>
+              <p className="text-sm font-medium text-slate-800">{m.titulo}</p>
+              <p className="mt-0.5 text-xs text-slate-500">{m.descricao}</p>
+            </button>
+          ))}
+        </div>
+        {modo !== 'empresa' && (
+          <div className="space-y-3 rounded-xl p-4 ring-1 ring-slate-200/80">
+            <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700"><MapPin className="h-4 w-4 text-accent-500" /> Local próprio</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" className="h-9" onClick={capturar} loading={buscando === 'gps'}>
+                <Crosshair className="h-4 w-4" /> Capturar onde estou
+              </Button>
+              <Button type="button" variant="secondary" className="h-9" onClick={buscarEndereco} loading={buscando === 'endereco'}>
+                <MapPinned className="h-4 w-4" /> Buscar pelo endereço do colaborador
+              </Button>
+            </div>
+            {endereco && <p className="text-xs text-slate-500">Endereço do cadastro: {endereco}</p>}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label="Latitude" obrigatorio>
+                <input className="input tabular-nums" inputMode="decimal" value={lat} placeholder="-3.731862"
+                  onChange={(e) => setLat(e.target.value.replace(',', '.'))} />
+              </Field>
+              <Field label="Longitude" obrigatorio>
+                <input className="input tabular-nums" inputMode="decimal" value={lng} placeholder="-38.526669"
+                  onChange={(e) => setLng(e.target.value.replace(',', '.'))} />
+              </Field>
+              <Field label="Raio permitido (m)" dica="De 10 m a 50 km.">
+                <input className="input tabular-nums" inputMode="numeric" value={raio} onChange={(e) => setRaio(e.target.value.replace(/\D/g, ''))} />
+              </Field>
+            </div>
+            {coords && (
+              <a href={linkMapa(parseFloat(lat), parseFloat(lng))} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:underline">
+                Conferir no mapa <ArrowRight className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
+        )}
+        {podeEditar && <Button onClick={salvar} loading={salvando}>Salvar local de ponto</Button>}
+      </fieldset>
     </div>
   );
 }
@@ -370,6 +517,9 @@ export function ColaboradorModal({
       const dados: Partial<Colaborador> = { ...form };
       delete dados.historico;
       delete dados.situacoes;
+      delete dados.local_ponto;
+      delete dados.local_empresa;
+      delete dados.local_ponto_modo;
       delete dados.acesso;
       // "1.234,56" e "2.500" → formato brasileiro; "2500.00" (vindo do banco) segue como está
       const salario = form.salario.includes(',')
@@ -393,6 +543,7 @@ export function ColaboradorModal({
     { chave: 'endereco', label: 'Endereço' },
     ...(form.id
       ? [
+          { chave: 'local' as Aba, label: 'Local de ponto' },
           { chave: 'acesso' as Aba, label: 'Acesso ao ponto' },
           { chave: 'historico' as Aba, label: 'Histórico' },
         ]
@@ -635,6 +786,14 @@ export function ColaboradorModal({
 
           {aba === 'historico' && <Historico itens={form.historico ?? []} />}
         </fieldset>
+      )}
+
+      {!carregando && aba === 'local' && form.id && (
+        <LocalPonto
+          colaborador={form}
+          podeEditar={podeEditar}
+          onSalvo={(modo, local) => setForm((f) => ({ ...f, local_ponto_modo: modo, local_ponto: local ?? f.local_ponto }))}
+        />
       )}
 
       {!carregando && aba === 'acesso' && form.id && (

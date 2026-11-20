@@ -1074,5 +1074,85 @@ grant execute on function api_totais_periodo(text, date, date, uuid, uuid, uuid[
 grant execute on function api_eventos_folha_salvar(text, jsonb)                        to anon, authenticated;
 grant execute on function api_quebra_regras(text, date, date, uuid, uuid, uuid[])              to anon, authenticated;
 
+-- -----------------------------------------------------------------------------
+-- Relatório de Banco de Horas: por colaborador, saldo anterior, créditos e débitos do período
+-- (automáticos), ajustes manuais, conversões (pagamento/desconto) e saldo final
+-- -----------------------------------------------------------------------------
+create or replace function api_relatorio_banco_horas(
+  p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_departamento uuid default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'relatorio_banco_horas');
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 366 then raise exception 'Selecione um período de até 1 ano.'; end if;
+  perform fn_banco_horas_atualizar();
+  return jsonb_build_object(
+    'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim),
+    'itens', coalesce((
+      select jsonb_agg(to_jsonb(x) order by x.nome)
+        from (
+          select c.id as colaborador_id, c.nome, c.matricula, d.nome as departamento, g.nome as cargo,
+                 coalesce(sum(b.minutos) filter (where b.data < p_ini), 0)::int as saldo_anterior,
+                 coalesce(sum(b.minutos) filter (where b.data between p_ini and p_fim and b.origem = 'automatico' and b.minutos > 0), 0)::int as creditos,
+                 coalesce(sum(b.minutos) filter (where b.data between p_ini and p_fim and b.origem = 'automatico' and b.minutos < 0), 0)::int as debitos,
+                 coalesce(sum(b.minutos) filter (where b.data between p_ini and p_fim and b.origem = 'manual' and b.tipo::text <> 'conversao'), 0)::int as ajustes,
+                 coalesce(sum(b.minutos) filter (where b.data between p_ini and p_fim and b.tipo::text = 'conversao'), 0)::int as conversoes,
+                 coalesce(sum(b.minutos) filter (where b.data <= p_fim), 0)::int as saldo_final,
+                 count(*) filter (where b.data between p_ini and p_fim and b.origem = 'automatico' and b.minutos > 0)::int as dias_credito,
+                 count(*) filter (where b.data between p_ini and p_fim and b.origem = 'automatico' and b.minutos < 0)::int as dias_debito
+            from colaboradores c
+            left join departamentos d on d.id = c.departamento_id
+            left join cargos g        on g.id = c.cargo_id
+            left join banco_horas b   on b.colaborador_id = c.id and b.data <= p_fim
+           where fn_visivel(c.id)
+             and fn_filtro_colaborador(c.id, null, p_colaboradores)
+             and (p_departamento is null or c.departamento_id = p_departamento)
+           group by c.id, c.nome, c.matricula, d.nome, g.nome
+          having count(b.id) > 0
+              or (c.controla_ponto and coalesce(c.data_desligamento, p_ini) >= p_ini)
+        ) x), '[]'::jsonb));
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Relatório de Escalas: cada dia com escala (trabalho ou folga) no período, com o nome da
+-- escala, o horário, se era feriado e o que foi realizado (trabalhado, saldo e ocorrência)
+-- -----------------------------------------------------------------------------
+create or replace function api_relatorio_escalas(
+  p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null,
+  p_departamento uuid default null, p_tipo text default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'relatorio_escalas');
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 92 then raise exception 'Selecione um período de até 3 meses.'; end if;
+  return jsonb_build_object(
+    'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim),
+    'itens', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'colaborador_id', c.id, 'colaborador', c.nome, 'matricula', c.matricula, 'departamento', d.nome,
+               'data', e.data, 'tipo', e.tipo, 'escala', l.nome,
+               'entrada', to_char(e.entrada, 'HH24:MI'), 'saida_intervalo', to_char(e.saida_intervalo, 'HH24:MI'),
+               'retorno_intervalo', to_char(e.retorno_intervalo, 'HH24:MI'), 'saida', to_char(e.saida, 'HH24:MI'),
+               'feriado', f.descricao,
+               'previsto_min', a.previsto_min, 'trabalhado_min', a.trabalhado_min, 'saldo_min', a.saldo_min,
+               'qtd_batidas', a.qtd_batidas, 'falta', a.falta, 'he_percentual', a.he_percentual,
+               'realizado', e.data < fn_hoje())
+             order by c.nome, e.data)
+        from escalas e
+        join colaboradores c            on c.id = e.colaborador_id
+        left join departamentos d       on d.id = c.departamento_id
+        left join escala_lancamentos l  on l.id = e.lancamento_id
+        left join feriados f            on f.data = e.data
+        left join fn_apuracao(p_ini, p_fim) a on a.colaborador_id = e.colaborador_id and a.data = e.data
+       where e.data between p_ini and p_fim
+         and fn_visivel(c.id)
+         and fn_filtro_colaborador(c.id, null, p_colaboradores)
+         and (p_departamento is null or c.departamento_id = p_departamento)
+         and (p_tipo is null or e.tipo = p_tipo)), '[]'::jsonb));
+end $$;
+
+grant execute on function api_relatorio_banco_horas(text, date, date, uuid[], uuid)     to anon, authenticated;
+grant execute on function api_relatorio_escalas(text, date, date, uuid[], uuid, text)    to anon, authenticated;
+
 -- Atualiza o cache de funções da API do Supabase (PostgREST) para as telas enxergarem as funções novas
 notify pgrst, 'reload schema';

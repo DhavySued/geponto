@@ -15,7 +15,7 @@
 create or replace function fn_pode(p_usuario uuid, p_pagina text, p_editar boolean default false)
 returns boolean language sql stable set search_path = public as $$
   select coalesce((
-    select p.is_admin or coalesce(case when p_editar then pp.pode_editar else pp.pode_visualizar end, false)
+    select p.is_admin or u.administrador or coalesce(case when p_editar then pp.pode_editar else pp.pode_visualizar end, false)
       from usuarios u
       join perfis p on p.id = u.perfil_id
       left join perfil_permissoes pp on pp.perfil_id = p.id and pp.pagina = p_pagina

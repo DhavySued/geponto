@@ -196,20 +196,25 @@ begin
     raise exception 'Você já registrou o ponto há menos de 1 minuto.';
   end if;
 
-  -- Cerca virtual: local de ponto da empresa da sessão (ou da empresa do colaborador)
+  -- Cerca virtual: os locais aceitos para o colaborador são o da empresa da sessão (ou da empresa
+  -- dele, com as limitações ligadas) e/ou o local próprio dele (home office), conforme local_ponto_modo.
+  -- Vale o local em que ele está (ou o mais perto, se estiver fora de todos).
   select * into v_cfg from empresa where id = 1;
-  if coalesce(v_cfg.usar_limitacoes_ponto, false) then
-    select l.id, l.raio_m into v_local, v_raio
-      from locais_ponto l
-     where l.ativo and l.empresa_id = coalesce(fn_empresa_atual(), c.empresa_id);
-  end if;
+  select l.id, l.raio_m, fn_distancia_m(v_lat, v_lng, l.latitude, l.longitude)
+    into v_local, v_raio, v_dist
+    from locais_ponto l
+   where l.ativo
+     and ((c.local_ponto_modo in ('empresa', 'ambos') and coalesce(v_cfg.usar_limitacoes_ponto, false)
+           and l.empresa_id = coalesce(fn_empresa_atual(), c.empresa_id))
+       or (c.local_ponto_modo in ('proprio', 'ambos') and l.colaborador_id = c.id))
+   order by fn_distancia_m(v_lat, v_lng, l.latitude, l.longitude) - l.raio_m nulls last
+   limit 1;
   if v_lat is null then
     v_status := 'sem_localizacao';
+    v_dist := null;
   elsif v_local is null then
     v_status := 'registrada';
   else
-    v_dist := fn_distancia_m(v_lat, v_lng, (select latitude from locais_ponto where id = v_local),
-                                           (select longitude from locais_ponto where id = v_local));
     v_status := case when v_dist <= v_raio then 'dentro' else 'fora' end;
   end if;
   if v_local is not null and v_cfg.bloquear_fora_cerca then

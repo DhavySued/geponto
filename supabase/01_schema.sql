@@ -959,6 +959,10 @@ create trigger trg_colaboradores_perfil before insert or update of perfil_evento
 
 alter table colaboradores alter column perfil_evento_id set not null;
 
+-- Administrador no próprio usuário: acesso a todas as telas, empresas e colaboradores,
+-- qualquer que seja o perfil
+alter table usuarios add column if not exists administrador boolean not null default false;
+
 -- -----------------------------------------------------------------------------
 -- Situação do Colaborador: o que vale a partir de cada data (situação, cargo, departamento,
 -- jornada, regra de cálculo e salário). A primeira é a da admissão. A apuração de cada dia
@@ -1164,6 +1168,15 @@ alter table sessoes add column if not exists empresa_id uuid references empresas
 -- Local de ponto da empresa (um por empresa)
 alter table locais_ponto add column if not exists empresa_id uuid references empresas(id) on delete cascade;
 create unique index if not exists ux_locais_ponto_empresa on locais_ponto (empresa_id) where empresa_id is not null;
+
+-- Local de ponto próprio do colaborador (ex.: home office). local_ponto_modo diz onde ele pode bater:
+--   empresa → só no local da empresa · proprio → só no local dele · ambos → em qualquer um dos dois
+alter table locais_ponto add column if not exists colaborador_id uuid references colaboradores(id) on delete cascade;
+create unique index if not exists ux_locais_ponto_colaborador on locais_ponto (colaborador_id) where colaborador_id is not null;
+alter table colaboradores add column if not exists local_ponto_modo text not null default 'empresa';
+alter table colaboradores drop constraint if exists colaboradores_local_ponto_modo_check;
+alter table colaboradores add constraint colaboradores_local_ponto_modo_check
+  check (local_ponto_modo in ('empresa', 'proprio', 'ambos'));
 update locais_ponto set empresa_id = fn_empresa_padrao()
  where id = (select id from locais_ponto order by ativo desc, created_at limit 1)
    and empresa_id is null
@@ -1220,6 +1233,81 @@ alter table justificativas        enable row level security;
 alter table faltas_folha          enable row level security;
 alter table empresas              enable row level security;
 alter table usuario_empresas      enable row level security;
+
+-- -----------------------------------------------------------------------------
+-- Log e auditoria: cada inclusão, alteração e exclusão nas tabelas de cadastro e movimento
+-- (com os valores antes e depois só dos campos que mudaram) e os acessos ao sistema.
+-- O usuário vem de app.usuario_id (fn_auth); sem ele, foi o próprio sistema (rotina automática).
+-- -----------------------------------------------------------------------------
+create table if not exists auditoria (
+  id              bigint generated always as identity primary key,
+  data_hora       timestamptz not null default now(),
+  usuario_id      uuid references usuarios(id) on delete set null,
+  usuario_nome    text,
+  empresa_id      uuid,
+  tabela          text not null,
+  registro_id     text,
+  acao            text not null check (acao in ('inclusao', 'alteracao', 'exclusao', 'login', 'login_falha')),
+  colaborador_id  uuid,
+  descricao       text,
+  campos          text[],
+  antes           jsonb,
+  depois          jsonb
+);
+create index if not exists ix_auditoria_data on auditoria (data_hora desc);
+create index if not exists ix_auditoria_tabela on auditoria (tabela, data_hora desc);
+create index if not exists ix_auditoria_colaborador on auditoria (colaborador_id, data_hora desc) where colaborador_id is not null;
+create index if not exists ix_auditoria_usuario on auditoria (usuario_id, data_hora desc);
+alter table auditoria enable row level security;
+
+create or replace function fn_auditar()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_antes  jsonb := case when tg_op <> 'INSERT' then to_jsonb(old) end;
+  v_depois jsonb := case when tg_op <> 'DELETE' then to_jsonb(new) end;
+  v_linha  jsonb := coalesce(v_depois, v_antes);
+  v_ign    text[] := array['created_at', 'updated_at', 'senha_hash', 'ultimo_acesso', 'ultimo_uso', 'chave_hash', 'token_hash'];
+  v_campos text[];
+  v_usuario uuid := nullif(current_setting('app.usuario_id', true), '')::uuid;
+begin
+  -- Lançamentos automáticos do banco de horas e o registro de batidas já são o próprio histórico
+  if tg_table_name = 'banco_horas' and v_linha ->> 'origem' = 'automatico' then return null; end if;
+  if tg_table_name = 'batidas' and tg_op = 'INSERT' then return null; end if;
+
+  if tg_op = 'UPDATE' then
+    select array_agg(k order by k) into v_campos
+      from jsonb_object_keys(v_depois) k
+     where k <> all(v_ign) and v_depois -> k is distinct from v_antes -> k;
+    if v_campos is null then return null; end if;   -- nada que importe mudou
+    select jsonb_object_agg(k, v_antes -> k), jsonb_object_agg(k, v_depois -> k) into v_antes, v_depois
+      from unnest(v_campos) k;
+  else
+    v_antes := v_antes - v_ign;
+    v_depois := v_depois - v_ign;
+  end if;
+
+  insert into auditoria (usuario_id, usuario_nome, empresa_id, tabela, registro_id, acao, colaborador_id, descricao, campos, antes, depois)
+  values (v_usuario, (select nome from usuarios where id = v_usuario),
+          coalesce(nullif(current_setting('app.empresa_id', true), '')::uuid,
+                   case when v_linha ? 'empresa_id' then (v_linha ->> 'empresa_id')::uuid end),
+          tg_table_name, v_linha ->> 'id',
+          case tg_op when 'INSERT' then 'inclusao' when 'UPDATE' then 'alteracao' else 'exclusao' end,
+          case when tg_table_name = 'colaboradores' then (v_linha ->> 'id')::uuid
+               when v_linha ? 'colaborador_id' then (v_linha ->> 'colaborador_id')::uuid end,
+          left(coalesce(v_linha ->> 'nome', v_linha ->> 'descricao', v_linha ->> 'razao_social', v_linha ->> 'login',
+                        v_linha ->> 'pagina', v_linha ->> 'data'), 200),
+          v_campos, v_antes, v_depois);
+  return null;
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['empresa', 'empresas', 'perfis', 'perfil_permissoes', 'usuarios', 'usuario_empresas', 'departamentos', 'cargos', 'jornadas', 'jornada_dias', 'feriados', 'colaboradores', 'colaborador_situacoes', 'ausencias', 'escalas', 'escala_lancamentos', 'batidas', 'locais_ponto', 'motivos_batida', 'banco_horas', 'fechamentos', 'solicitacoes', 'eventos_folha', 'perfis_eventos', 'perfil_evento_he', 'justificativas', 'faltas_folha'] loop
+    execute format('drop trigger if exists trg_auditoria on %I', t);
+    execute format('create trigger trg_auditoria after insert or update or delete on %I for each row execute function fn_auditar()', t);
+  end loop;
+end $$;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;

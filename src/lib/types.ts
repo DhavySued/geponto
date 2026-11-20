@@ -21,6 +21,9 @@ export type PaginaChave =
   | 'totais_periodo'
   | 'quebra_regras'
   | 'locais_batidas'
+  | 'relatorio_banco_horas'
+  | 'relatorio_escalas'
+  | 'auditoria'
   | 'empresas'
   | 'configuracoes'
   | 'integracoes';
@@ -287,6 +290,16 @@ export interface SituacoesDados {
   perfis_eventos: (Opcao & { padrao: boolean })[];
 }
 
+export type LocalPontoModo = 'empresa' | 'proprio' | 'ambos';
+
+export interface LocalPontoProprio {
+  latitude: number;
+  longitude: number;
+  raio_m: number;
+  precisao_m: number | null;
+  endereco: string | null;
+}
+
 export interface AcessoColaborador {
   usuario_id: string;
   login: string;
@@ -332,6 +345,10 @@ export interface Colaborador {
   historico?: HistoricoItem[];
   /** Situações (da mais recente para a mais antiga): só se alteram na Situação do Colaborador */
   situacoes?: ColaboradorSituacao[];
+  /** Onde pode bater o ponto: local da empresa, local próprio (home office) ou os dois */
+  local_ponto_modo: LocalPontoModo;
+  local_ponto?: LocalPontoProprio | null;
+  local_empresa?: { nome: string; raio_m: number; ativo: boolean } | null;
   acesso?: AcessoColaborador | null;
 }
 
@@ -1043,7 +1060,12 @@ export interface UsuarioSistema {
   status: StatusUsuario;
   perfil_id: string;
   perfil: string;
+  /** Administrador de fato: pelo perfil ou pela chave no usuário */
   is_admin: boolean;
+  /** Chave "Administrador: acesso a tudo" no próprio usuário */
+  administrador: boolean;
+  /** O perfil é de administrador */
+  perfil_admin: boolean;
   abrangencia: Abrangencia;
   colaborador_id: string | null;
   colaborador: string | null;
@@ -1243,4 +1265,78 @@ export interface JustificativaItem {
 export interface JustificativasLista {
   itens: JustificativaItem[];
   motivos: string[];
+}
+
+export interface RelatorioBancoHorasItem {
+  colaborador_id: string;
+  nome: string;
+  matricula: string;
+  departamento: string | null;
+  cargo: string | null;
+  saldo_anterior: number;
+  creditos: number;
+  debitos: number;
+  ajustes: number;
+  conversoes: number;
+  saldo_final: number;
+  dias_credito: number;
+  dias_debito: number;
+}
+
+export interface RelatorioBancoHoras {
+  periodo: { inicio: string; fim: string };
+  itens: RelatorioBancoHorasItem[];
+}
+
+export interface RelatorioEscalasItem {
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
+  departamento: string | null;
+  data: string;
+  tipo: 'trabalho' | 'folga';
+  escala: string | null;
+  entrada: string | null;
+  saida_intervalo: string | null;
+  retorno_intervalo: string | null;
+  saida: string | null;
+  feriado: string | null;
+  previsto_min: number | null;
+  trabalhado_min: number | null;
+  saldo_min: number | null;
+  qtd_batidas: number | null;
+  falta: boolean | null;
+  he_percentual: number | null;
+  /** O dia já passou (tem apuração) */
+  realizado: boolean;
+}
+
+export interface RelatorioEscalas {
+  periodo: { inicio: string; fim: string };
+  itens: RelatorioEscalasItem[];
+}
+
+export type AcaoAuditoria = 'inclusao' | 'alteracao' | 'exclusao' | 'login' | 'login_falha';
+
+export interface AuditoriaItem {
+  id: number;
+  data_hora: string;
+  usuario_id: string | null;
+  usuario: string | null;
+  tabela: string;
+  registro_id: string | null;
+  acao: AcaoAuditoria;
+  colaborador_id: string | null;
+  colaborador: string | null;
+  descricao: string | null;
+  campos: string[] | null;
+  antes: Record<string, unknown> | null;
+  depois: Record<string, unknown> | null;
+}
+
+export interface AuditoriaConsulta {
+  itens: AuditoriaItem[];
+  limite: number;
+  usuarios: { id: string; nome: string }[];
+  tabelas: string[];
 }

@@ -282,6 +282,12 @@ begin
                   left join usuarios u on u.id = h.usuario_id
                  where h.colaborador_id = c.id), '[]'::jsonb),
               'situacoes', fn_situacoes_json(c.id, null),
+              'local_ponto', (select jsonb_build_object('latitude', l.latitude, 'longitude', l.longitude, 'raio_m', l.raio_m,
+                                                        'precisao_m', l.precisao_m, 'endereco', l.endereco)
+                                from locais_ponto l where l.colaborador_id = c.id and l.ativo),
+              'local_empresa', (select jsonb_build_object('nome', l.nome, 'raio_m', l.raio_m,
+                                                          'ativo', coalesce((select usar_limitacoes_ponto from empresa where id = 1), false))
+                                  from locais_ponto l where l.ativo and l.empresa_id = c.empresa_id),
               'acesso', (
                 select jsonb_build_object('usuario_id', u.id, 'login', u.login, 'status', u.status,
                                           'perfil', p.nome, 'ultimo_acesso', u.ultimo_acesso)
@@ -440,6 +446,48 @@ exception
     raise exception 'A data de desligamento não pode ser anterior à admissão.';
   when invalid_datetime_format or datetime_field_overflow then
     raise exception 'Data inválida. Confira as datas informadas.';
+end $$;
+
+-- Onde o colaborador pode bater o ponto: local da empresa, local próprio (home office) ou os dois.
+-- p_dados: { modo, latitude?, longitude?, raio_m?, precisao_m?, endereco? }
+create or replace function api_colaborador_local_salvar(p_token text, p_colaborador uuid, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d jsonb := p_dados;
+  v_modo text := coalesce(fn_txt(d, 'modo'), 'empresa');
+  v_nome text;
+  v_lat numeric := fn_txt(d, 'latitude')::numeric;
+  v_lng numeric := fn_txt(d, 'longitude')::numeric;
+begin
+  perform fn_auth(p_token, 'colaboradores', true);
+  select nome into v_nome from colaboradores where id = p_colaborador;
+  if v_nome is null then raise exception 'Colaborador não encontrado.'; end if;
+  if not fn_visivel(p_colaborador) then
+    raise exception 'Colaborador fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+  if v_modo not in ('empresa', 'proprio', 'ambos') then raise exception 'Escolha onde o colaborador pode bater o ponto.'; end if;
+
+  if v_modo = 'empresa' then
+    -- O local próprio fica guardado (as batidas antigas apontam para ele), só deixa de valer
+    update locais_ponto set ativo = false where colaborador_id = p_colaborador;
+  else
+    if v_lat is null or v_lng is null then
+      raise exception 'Informe a localização do local próprio (capture no local, busque pelo endereço ou digite as coordenadas).';
+    end if;
+    insert into locais_ponto (colaborador_id, nome, endereco, latitude, longitude, raio_m, precisao_m, ativo)
+    values (p_colaborador, 'Local próprio · ' || v_nome, fn_txt(d, 'endereco'), round(v_lat, 6), round(v_lng, 6),
+            coalesce(fn_txt(d, 'raio_m')::int, 150), round(fn_txt(d, 'precisao_m')::numeric)::int, true)
+    on conflict (colaborador_id) where colaborador_id is not null do update set
+      nome = excluded.nome, endereco = excluded.endereco, latitude = excluded.latitude, longitude = excluded.longitude,
+      raio_m = excluded.raio_m, precisao_m = excluded.precisao_m, ativo = true;
+  end if;
+  update colaboradores set local_ponto_modo = v_modo where id = p_colaborador;
+  return jsonb_build_object('ok', true);
+exception
+  when check_violation or numeric_value_out_of_range then
+    raise exception 'Confira a localização: latitude entre -90 e 90, longitude entre -180 e 180 e raio entre 10 m e 50 km.';
+  when invalid_text_representation then
+    raise exception 'Coordenadas inválidas. Use números com ponto, ex.: -3.731862.';
 end $$;
 
 -- Acesso do colaborador ao sistema para registrar o próprio ponto (perfil "Colaborador")
@@ -795,6 +843,7 @@ grant execute on function api_jornada_salvar(text, jsonb)        to anon, authen
 grant execute on function api_jornada_excluir(text, uuid)        to anon, authenticated;
 grant execute on function api_perfis_eventos_listar(text)        to anon, authenticated;
 grant execute on function api_colaborador_situacoes(text, uuid[])          to anon, authenticated;
+grant execute on function api_colaborador_local_salvar(text, uuid, jsonb)  to anon, authenticated;
 grant execute on function api_colaborador_situacao_salvar(text, jsonb)     to anon, authenticated;
 grant execute on function api_colaborador_situacao_excluir(text, uuid)     to anon, authenticated;
 revoke execute on function fn_situacoes_json(uuid, uuid[])                 from public, anon, authenticated;

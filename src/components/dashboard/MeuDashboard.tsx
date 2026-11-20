@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { AlertTriangle, CalendarDays, Clock, Fingerprint, Hourglass, Inbox, RefreshCw, Timer, UserX } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Fingerprint, Hourglass, Inbox, RefreshCw, Timer, UserX } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { KpiCard, KpiSkeleton } from '@/components/dashboard/KpiCard';
@@ -246,7 +246,7 @@ export function MeuDashboard() {
 
         <div className="grid gap-4">
           {!r || !bh ? (
-            Array.from({ length: 2 }, (_, i) => <KpiSkeleton key={i} />)
+            <KpiSkeleton />
           ) : (
             <>
               <KpiCard
@@ -255,13 +255,6 @@ export function MeuDashboard() {
                 titulo="Meu banco de horas"
                 valor={formatMinutos(bh.saldo, true)}
                 rodape={<span>No período: {formatMinutos(bh.periodo, true)} · saldo anterior {formatMinutos(bh.anterior, true)}</span>}
-              />
-              <KpiCard
-                icon={Clock}
-                titulo="Horas trabalhadas"
-                valor={formatMinutos(r.trabalhado_min)}
-                complemento={`de ${formatMinutos(r.previsto_min)}`}
-                rodape={<span>{numero(r.dias_trabalhados)} dia(s) trabalhado(s) · extras {formatMinutos(r.extra_min)}</span>}
               />
             </>
           )}

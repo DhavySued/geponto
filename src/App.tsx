@@ -27,6 +27,9 @@ import PerfisEventos from '@/pages/PerfisEventos';
 import Escalas from '@/pages/Escalas';
 import QuebraRegras from '@/pages/QuebraRegras';
 import LocaisBatidas from '@/pages/LocaisBatidas';
+import RelatorioBancoHoras from '@/pages/RelatorioBancoHoras';
+import RelatorioEscalas from '@/pages/RelatorioEscalas';
+import Auditoria from '@/pages/Auditoria';
 import TotaisPeriodo from '@/pages/TotaisPeriodo';
 import TratamentoBatidas from '@/pages/TratamentoBatidas';
 import Usuarios from '@/pages/Usuarios';
@@ -76,10 +79,13 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   totais_periodo: TotaisPeriodo,
   quebra_regras: QuebraRegras,
   locais_batidas: LocaisBatidas,
+  relatorio_banco_horas: RelatorioBancoHoras,
+  relatorio_escalas: RelatorioEscalas,
   empresas: Empresas,
   configuracoes: Configuracoes,
   integracoes: Integracoes,
   usuarios: Usuarios,
+  auditoria: Auditoria,
 };
 
 export default function App() {

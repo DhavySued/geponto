@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { AlertTriangle, CheckCircle2, Fingerprint, Hourglass, Info, Timer, UserX } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CheckCircle2, Fingerprint, Hourglass, Info, Timer, UserX } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { AvisoGeo, GeoIndicador } from '@/components/ponto/Geo';
 import { Badge } from '@/components/ui/Badge';
@@ -23,6 +23,66 @@ function Indicador({ titulo, valor, detalhe, icon: Icon }: { titulo: string; val
       </div>
       <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight text-slate-900">{valor}</p>
       {detalhe && <p className="mt-1 text-xs text-slate-400">{detalhe}</p>}
+    </div>
+  );
+}
+
+const hhmm = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const minutosEntre = (a: string | null | undefined, b: string | null | undefined) => {
+  if (!a || !b) return 0;
+  const [ha, ma] = a.split(':').map(Number);
+  const [hb, mb] = b.split(':').map(Number);
+  return hb * 60 + mb - (ha * 60 + ma);
+};
+
+/** Previsão do dia: marcações previstas da jornada e, em jornada, a hora prevista de saída */
+function PrevisaoHoje({
+  jd,
+  previstoMin,
+  saidaPrevista,
+}: {
+  jd: NonNullable<MeuPontoData['hoje']>['jornada_dia'] | undefined;
+  previstoMin: number;
+  saidaPrevista: Date | null;
+}) {
+  const marcas = !jd || jd.folga
+    ? []
+    : [
+        { rotulo: 'Entrada', hora: jd.entrada },
+        ...(!jd.intervalo_flexivel && jd.saida_intervalo
+          ? [{ rotulo: 'Saída intervalo', hora: jd.saida_intervalo }, { rotulo: 'Retorno', hora: jd.retorno_intervalo }]
+          : []),
+        { rotulo: 'Saída', hora: jd.saida },
+      ].filter((m) => m.hora);
+  return (
+    <div className="card p-5 sm:col-span-2">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-slate-500">Previsão para hoje</p>
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
+          <CalendarClock className="h-4 w-4" />
+        </span>
+      </div>
+      {marcas.length === 0 ? (
+        <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{jd?.folga ? 'Folga' : 'Sem jornada prevista'}</p>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {marcas.map((m) => (
+              <div key={m.rotulo} className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200/70">
+                <p className="text-[11px] text-slate-500">{m.rotulo}</p>
+                <p className="text-lg font-semibold tabular-nums text-slate-900">{m.hora}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            {formatMinutos(previstoMin)} previstas
+            {jd?.intervalo_flexivel && jd.intervalo_min != null && ` · intervalo flexível de ${formatMinutos(jd.intervalo_min)}`}
+            {saidaPrevista && (
+              <> · <strong className="font-semibold text-primary-700">saída prevista às {hhmm(saidaPrevista)}</strong> pelo horário que você entrou</>
+            )}
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -95,6 +155,13 @@ export default function MeuPonto() {
   // Enquanto está em jornada, o trabalhado do dia continua contando na tela
   const trabalhado = (hoje?.trabalhado_min ?? 0) + (emJornada ? Math.floor((agora.getTime() - carregadoEm) / 60000) : 0);
   const jd = hoje?.jornada_dia;
+  // Em jornada: falta cumprir o previsto (e o intervalo, se ainda não foi feito)
+  const intervaloPendente = !!jd && !jd.folga && (hoje?.batidas.length ?? 0) === 1
+    ? (jd.intervalo_flexivel ? jd.intervalo_min ?? 0 : Math.max(0, minutosEntre(jd.saida_intervalo, jd.retorno_intervalo)))
+    : 0;
+  const saidaPrevista = emJornada && (hoje?.previsto_min ?? 0) > 0
+    ? new Date(agora.getTime() + (Math.max(0, (hoje?.previsto_min ?? 0) - trabalhado) + intervaloPendente) * 60000)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -220,10 +287,7 @@ export default function MeuPonto() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Indicador icon={Timer} titulo="Trabalhado hoje" valor={formatMinutos(trabalhado)}
-          detalhe={emJornada ? 'Contando até agora' : undefined} />
-        <Indicador icon={Fingerprint} titulo="Previsto hoje" valor={formatMinutos(hoje?.previsto_min ?? 0)}
-          detalhe={jd?.folga ? 'Folga' : undefined} />
+        <PrevisaoHoje jd={jd} previstoMin={hoje?.previsto_min ?? 0} saidaPrevista={saidaPrevista} />
         <Indicador icon={Hourglass} titulo="Banco de horas" valor={formatMinutos(dados?.saldo_banco_min ?? 0, true)}
           detalhe="Saldo até ontem" />
       </div>

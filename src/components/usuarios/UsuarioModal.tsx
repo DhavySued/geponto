@@ -17,6 +17,8 @@ interface Form {
   status: StatusUsuario;
   senha: string;
   trocar_senha: boolean;
+  /** Administrador: acesso a tudo, por cima do perfil */
+  administrador: boolean;
   /** Empresas que o usuário pode acessar (escolhidas no login) */
   empresas: string[];
 }
@@ -56,6 +58,7 @@ export function UsuarioModal({
             status: usuario.status,
             senha: '',
             trocar_senha: true,
+            administrador: usuario.administrador,
             empresas: usuario.empresas ?? [],
           }
         : {
@@ -67,6 +70,7 @@ export function UsuarioModal({
             status: 'ativo',
             senha: '',
             trocar_senha: true,
+            administrador: false,
             empresas: eu?.empresa ? [eu.empresa.id] : [],
           },
     );
@@ -80,7 +84,10 @@ export function UsuarioModal({
 
   if (!form) return null;
   const perfil = dados.perfis.find((p) => p.id === form.perfil_id);
-  const exigeColaborador = !!perfil && !perfil.is_admin && perfil.abrangencia !== 'todos';
+  const admin = !!perfil?.is_admin || form.administrador;
+  const exigeColaborador = !!perfil && !admin && perfil.abrangencia !== 'todos';
+  // Só um administrador liga ou desliga o acesso de administrador
+  const souAdmin = !!eu?.perfil.is_admin;
   const marcarEmpresa = (id: string, v: boolean) =>
     setForm({ ...form, empresas: v ? [...form.empresas, id] : form.empresas.filter((x) => x !== id) });
 
@@ -170,6 +177,25 @@ export function UsuarioModal({
             ))}
           </select>
         </Field>
+        <div className="rounded-xl p-3 ring-1 ring-slate-200/80 sm:col-span-2">
+          {perfil?.is_admin ? (
+            <p className="text-sm text-slate-600">O perfil <strong>{perfil.nome}</strong> já é de administrador: acesso a tudo.</p>
+          ) : (
+            <>
+              <Switch
+                ativo={form.administrador}
+                onChange={(v) => (souAdmin && !proprio) && setForm({ ...form, administrador: v })}
+                label="Administrador: acesso a tudo"
+                descricao="Vê e altera todas as telas, empresas e colaboradores, qualquer que seja o perfil acima."
+              />
+              {(!souAdmin || proprio) && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  {proprio ? 'Você não pode alterar o próprio acesso de administrador.' : 'Só um administrador pode ligar ou desligar esta opção.'}
+                </p>
+              )}
+            </>
+          )}
+        </div>
         <Field
           label={usuario ? 'Redefinir senha' : 'Senha inicial'}
           obrigatorio={!usuario}
@@ -179,9 +205,9 @@ export function UsuarioModal({
             onChange={(e) => setForm({ ...form, senha: e.target.value })} />
         </Field>
         <div className="sm:col-span-2">
-          <p className="label">Empresas que pode acessar{!perfil?.is_admin && !form.colaborador_id && <span className="text-rose-500"> *</span>}</p>
-          {perfil?.is_admin ? (
-            <p className="text-xs text-slate-500">Perfil administrador: acessa todas as empresas.</p>
+          <p className="label">Empresas que pode acessar{!admin && !form.colaborador_id && <span className="text-rose-500"> *</span>}</p>
+          {admin ? (
+            <p className="text-xs text-slate-500">Administrador: acessa todas as empresas.</p>
           ) : (
             <>
               <div className="flex flex-wrap gap-2">

@@ -107,7 +107,9 @@ export function ComboboxChips({
   const tudo = opcoes.length > 0 && valor.length === opcoes.length;
 
   return (
-    <div ref={caixa} className="relative">
+    // Dentro de um <label> (Field), o navegador repassa o clique para o 1º botão do rótulo, que é o X do
+    // primeiro chip: clicar na caixa ou numa opção desmarcava o colaborador. preventDefault cancela esse repasse.
+    <div ref={caixa} className="relative" onClick={(e) => e.preventDefault()}>
       <div
         onClick={() => {
           if (disabled) return;

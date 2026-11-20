@@ -49,8 +49,11 @@ function LinkItem({ item, onNavegar }: { item: NavItem; onNavegar: () => void })
       onClick={onNavegar}
       className={({ isActive }) =>
         clsx(
-          'flex items-center gap-3 rounded-xl px-3 py-2.5 transition',
-          isActive ? 'bg-primary-50 text-primary-700' : 'text-slate-700 hover:bg-slate-50',
+          'flex items-center gap-3 rounded-xl px-3 py-2.5 transition focus-visible:outline-none',
+          // Sombreamento do item em foco/selecionado na cascata
+          isActive
+            ? 'bg-primary-50 text-primary-700 shadow-sm ring-1 ring-inset ring-primary-200/70'
+            : 'text-slate-700 hover:bg-slate-100 hover:shadow-sm focus-visible:bg-slate-100',
         )
       }
     >
@@ -166,7 +169,12 @@ function SubmenuBotao({ nome, aberto, ativo: estaAtivo, onClick }: { nome: strin
       aria-expanded={aberto}
       className={clsx(
         'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition',
-        aberto ? 'bg-slate-100 text-slate-900' : estaAtivo ? 'bg-primary-50 text-primary-700' : 'text-slate-700 hover:bg-slate-50',
+        // Submenu aberto fica sombreado enquanto a cascata ao lado está visível
+        aberto
+          ? 'bg-slate-100 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-200'
+          : estaAtivo
+            ? 'bg-primary-50 text-primary-700 shadow-sm ring-1 ring-inset ring-primary-200/70'
+            : 'text-slate-700 hover:bg-slate-100 hover:shadow-sm',
       )}
     >
       {Icone && <Icone className={clsx('h-[18px] w-[18px] shrink-0', estaAtivo ? 'text-accent-500' : 'text-slate-400')} strokeWidth={1.9} />}

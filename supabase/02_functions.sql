@@ -44,6 +44,14 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Sessão e permissões
 -- -----------------------------------------------------------------------------
+-- Administrador: o perfil é de administrador ou o usuário tem a chave "Administrador" ligada
+create or replace function fn_usuario_admin(p_usuario uuid)
+returns boolean language sql stable set search_path = public as $$
+  select coalesce((select p.is_admin or u.administrador
+                     from usuarios u join perfis p on p.id = u.perfil_id
+                    where u.id = p_usuario), false);
+$$;
+
 -- Empresas ativas a que o usuário tem acesso: todas para o administrador; para os demais,
 -- as vinculadas no cadastro do usuário mais a empresa do colaborador dele.
 create or replace function fn_empresas_do_usuario(p_usuario uuid)
@@ -51,7 +59,7 @@ returns setof uuid language sql stable set search_path = public as $$
   select e.id
     from empresas e
    where e.ativo
-     and (exists (select 1 from usuarios u join perfis p on p.id = u.perfil_id where u.id = p_usuario and p.is_admin)
+     and (fn_usuario_admin(p_usuario)
           or e.id in (select ue.empresa_id from usuario_empresas ue where ue.usuario_id = p_usuario)
           or e.id in (select c.empresa_id from usuarios u join colaboradores c on c.id = u.colaborador_id
                        where u.id = p_usuario));
@@ -66,8 +74,9 @@ returns jsonb language sql stable set search_path = public as $$
     'colaborador_id', u.colaborador_id,
     'email', u.email,
     'trocar_senha', u.trocar_senha,
-    'perfil', jsonb_build_object('id', p.id, 'nome', p.nome, 'is_admin', p.is_admin,
-                                 'abrangencia', case when p.is_admin then 'todos' else p.abrangencia end),
+    'administrador', u.administrador,
+    'perfil', jsonb_build_object('id', p.id, 'nome', p.nome, 'is_admin', p.is_admin or u.administrador,
+                                 'abrangencia', case when p.is_admin or u.administrador then 'todos' else p.abrangencia end),
     -- Empresa da sessão e as empresas a que o usuário tem acesso
     'empresa', (select jsonb_build_object('id', e.id, 'nome', coalesce(e.nome_fantasia, e.razao_social),
                                           'razao_social', e.razao_social, 'cnpj', e.cnpj)
@@ -77,8 +86,8 @@ returns jsonb language sql stable set search_path = public as $$
                             from empresas e where e.id in (select fn_empresas_do_usuario(u.id))), '[]'::jsonb),
     'permissoes', coalesce((
       select jsonb_object_agg(pg.chave, jsonb_build_object(
-               'visualizar', p.is_admin or coalesce(pp.pode_visualizar, false),
-               'editar',     p.is_admin or coalesce(pp.pode_editar, false)))
+               'visualizar', p.is_admin or u.administrador or coalesce(pp.pode_visualizar, false),
+               'editar',     p.is_admin or u.administrador or coalesce(pp.pode_editar, false)))
       from paginas pg
       left join perfil_permissoes pp on pp.pagina = pg.chave and pp.perfil_id = p.id
     ), '{}'::jsonb)
@@ -113,9 +122,7 @@ begin
   end if;
 
   if p_pagina is not null then
-    select p.is_admin into v_admin
-      from usuarios u join perfis p on p.id = u.perfil_id
-     where u.id = v_usuario;
+    v_admin := fn_usuario_admin(v_usuario);
 
     if not v_admin then
       select case when p_editar then pp.pode_editar else pp.pode_visualizar end into v_ok
@@ -145,7 +152,7 @@ returns boolean language sql stable set search_path = public as $$
              when fn_empresa_atual() is not null
                   and not exists (select 1 from colaboradores c
                                    where c.id = p_colaborador and c.empresa_id = fn_empresa_atual()) then false
-             when p.is_admin or p.abrangencia = 'todos' then true
+             when p.is_admin or u.administrador or p.abrangencia = 'todos' then true
              when u.colaborador_id is null then false
              when p.abrangencia = 'equipe' then
                exists (select 1 from colaboradores c where c.id = p_colaborador and c.gestor_id = u.colaborador_id)
@@ -167,17 +174,27 @@ $$;
 -- Confere login e senha, com bloqueio temporário após 5 falhas. Retorna JSON em vez
 -- de lançar exceção para que o contador de tentativas falhas seja persistido (uma
 -- exceção desfaria o UPDATE). Usada pelo login e pelo registro rápido de ponto.
+-- Entra com o login, o e-mail ou o CPF do colaborador vinculado ao usuário (com ou sem pontuação).
 create or replace function fn_verificar_credenciais(p_login text, p_senha text)
 returns jsonb language plpgsql volatile security definer set search_path = public, extensions as $$
 declare
   v_user  usuarios%rowtype;
   c_erro  constant text := 'Usuário ou senha inválidos.';
+  v_cpf   text := case when trim(coalesce(p_login, '')) ~ '^[0-9.\-\s]+$'
+                       then nullif(regexp_replace(p_login, '\D', '', 'g'), '') end;
 begin
   select * into v_user
     from usuarios
    where lower(login) = lower(trim(p_login))
       or lower(email) = lower(trim(p_login))
    limit 1;
+
+  if not found and length(v_cpf) = 11 then
+    select u.* into v_user
+      from usuarios u join colaboradores c on c.id = u.colaborador_id
+     where regexp_replace(c.cpf, '\D', '', 'g') = v_cpf
+     limit 1;
+  end if;
 
   if not found then
     perform extensions.crypt(coalesce(p_senha, ''), extensions.gen_salt('bf', 10)); -- tempo constante
@@ -247,6 +264,13 @@ begin
 
   v_cred := fn_verificar_credenciais(p_login, p_senha);
   if not (v_cred ->> 'ok')::boolean then
+    insert into auditoria (usuario_id, usuario_nome, tabela, acao, descricao, depois)
+    select u.id, u.nome, 'acesso', 'login_falha',
+           case when trim(coalesce(p_login, '')) ~ '^[0-9.\-\s]+$' and length(regexp_replace(p_login, '\D', '', 'g')) = 11
+                then 'CPF ' || left(regexp_replace(p_login, '\D', '', 'g'), 3) || '.***.***-' || right(regexp_replace(p_login, '\D', '', 'g'), 2)
+                else left(lower(trim(coalesce(p_login, ''))), 120) end,
+           jsonb_build_object('motivo', v_cred ->> 'erro', 'navegador', left(p_user_agent, 300))
+      from (select 1) x left join usuarios u on lower(u.login) = lower(trim(coalesce(p_login, '')));
     return v_cred;
   end if;
   v_usuario := (v_cred ->> 'usuario_id')::uuid;
@@ -262,6 +286,10 @@ begin
   insert into sessoes (usuario_id, token_hash, expira_em, user_agent, empresa_id)
   values (v_usuario, fn_hash_token(v_token), v_exp, left(p_user_agent, 300), (v_emp ->> 'empresa_id')::uuid);
   perform set_config('app.empresa_id', v_emp ->> 'empresa_id', true);
+  insert into auditoria (usuario_id, usuario_nome, empresa_id, tabela, acao, descricao, depois)
+  select v_usuario, nome, (v_emp ->> 'empresa_id')::uuid, 'acesso', 'login', login,
+         jsonb_build_object('navegador', left(p_user_agent, 300))
+    from usuarios where id = v_usuario;
 
   return jsonb_build_object('ok', true, 'token', v_token, 'expira_em', v_exp,
                             'usuario', fn_usuario_payload(v_usuario));

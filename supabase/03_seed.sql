@@ -37,9 +37,12 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('totais_periodo',     'Totais e Exportação p/ Folha', 'Relatórios', 82),
   ('quebra_regras',      'Quebra de Regras',          'Relatórios', 84),
   ('locais_batidas',     'Locais das Batidas',        'Relatórios', 86),
+  ('relatorio_banco_horas', 'Relatório de Banco de Horas', 'Relatórios', 87),
+  ('relatorio_escalas',  'Relatório de Escalas',      'Relatórios', 88),
   ('empresas',           'Empresas',                  'Configurações', 90),
   ('configuracoes',      'Registro de Ponto',         'Configurações', 92),
-  ('integracoes',        'Integrações (API)',         'Configurações', 94)
+  ('integracoes',        'Integrações (API)',         'Configurações', 94),
+  ('auditoria',          'Log e Auditoria',           'Configurações', 96)
 on conflict (chave) do update
   set nome = excluded.nome, grupo = excluded.grupo, ordem = excluded.ordem;
 
@@ -162,4 +165,12 @@ update feriados set tipo = 'facultativo'
 insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
 select perfil_id, 'situacoes_colaborador', pode_visualizar, pode_editar
   from perfil_permissoes where pagina = 'colaboradores'
+on conflict (perfil_id, pagina) do nothing;
+
+-- Relatórios de Banco de Horas e de Escalas: quem vê o banco de horas / as escalas vê o relatório
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_banco_horas', pode_visualizar, false from perfil_permissoes where pagina = 'banco_horas'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_escalas', pode_visualizar, false from perfil_permissoes where pagina = 'escalas'
 on conflict (perfil_id, pagina) do nothing;

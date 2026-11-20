@@ -256,6 +256,9 @@ export default function SituacoesColaborador() {
   });
   const [excluir, setExcluir] = useState<ColaboradorSituacao | null>(null);
   const [excluindo, setExcluindo] = useState(false);
+  // Ao entrar, pergunta qual colaborador consultar; fechando sem escolher, ficam todos
+  const [escolher, setEscolher] = useState(() => !params.get('colaborador'));
+  const [escolhidos, setEscolhidos] = useState<string[]>([]);
 
   const consultar = useCallback(async (ids = colaboradores) => {
     setCarregando(true);
@@ -274,19 +277,21 @@ export default function SituacoesColaborador() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Agrupa por colaborador (a API já vem ordenada por nome e da mais recente para a mais antiga)
-  const grupos = useMemo(() => {
+  // Linhas da tabela (a API já vem ordenada por nome e da mais recente para a mais antiga)
+  const linhas = useMemo(() => {
     const doDepto = new Set(
       departamento ? (dados?.colaboradores ?? []).filter((c) => c.departamento_id === departamento).map((c) => c.id) : [],
     );
-    const mapa = new Map<string, ColaboradorSituacao[]>();
-    for (const s of dados?.situacoes ?? []) {
-      if (departamento && !doDepto.has(s.colaborador_id)) continue;
-      if (somenteVigente && !s.vigente && !(s.primeira && s.futura)) continue;
-      mapa.set(s.colaborador_id, [...(mapa.get(s.colaborador_id) ?? []), s]);
-    }
-    return [...mapa.values()];
+    return (dados?.situacoes ?? []).filter((x) =>
+      (!departamento || doDepto.has(x.colaborador_id)) && (!somenteVigente || x.vigente || (x.primeira && x.futura)));
   }, [dados, departamento, somenteVigente]);
+  const qtdColaboradores = useMemo(() => new Set(linhas.map((l) => l.colaborador_id)).size, [linhas]);
+
+  const confirmarEscolha = () => {
+    setEscolher(false);
+    setColaboradores(escolhidos);
+    if (escolhidos.length) consultar(escolhidos);
+  };
 
   const confirmarExclusao = async () => {
     if (!excluir) return;
@@ -362,71 +367,81 @@ export default function SituacoesColaborador() {
 
       {dados === null ? (
         <div className="card h-64 animate-pulse" />
-      ) : grupos.length === 0 ? (
+      ) : linhas.length === 0 ? (
         <div className="card">
           <EmptyState icon={UserCog} titulo="Nenhuma situação encontrada" descricao="Ajuste os filtros ou cadastre um colaborador." />
         </div>
       ) : (
-        grupos.map((itens) => (
-          <section key={itens[0].colaborador_id} className="card overflow-hidden">
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-              <div>
-                <p className="font-medium text-slate-800">{itens[0].colaborador}</p>
-                <p className="text-xs text-slate-500">Matrícula {itens[0].matricula} · {itens.length} situação(ões)</p>
-              </div>
-              {podeEditar && (
-                <Button variant="ghost" className="h-9" onClick={() => setModal({ aberto: true, situacao: null, colaborador: itens[0].colaborador_id })}>
-                  <Plus className="h-4 w-4" /> Nova situação
-                </Button>
-              )}
-            </header>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50/70 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-5 py-2.5">Período</th>
-                    <th className="px-3 py-2.5">Situação</th>
-                    <th className="px-3 py-2.5">Cargo / Departamento</th>
-                    <th className="px-3 py-2.5">Jornada / Regra de cálculo</th>
-                    <th className="px-3 py-2.5 text-right">Salário</th>
-                    <th className="px-3 py-2.5" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {itens.map((s) => (
-                    <tr key={s.id} className={clsx(s.vigente && 'bg-primary-50/40')}>
-                      <td className="px-5 py-3 align-top">
-                        <p className="whitespace-nowrap font-medium tabular-nums text-slate-800">
-                          {dataBR(s.data_inicio)} {s.data_fim ? `a ${dataBR(s.data_fim)}` : 'em diante'}
-                        </p>
-                        <p className="mt-1 flex flex-wrap gap-1">
-                          {s.vigente && <Badge tone="primary">Vigente</Badge>}
-                          {s.futura && <Badge tone="orange">A partir de {dataBR(s.data_inicio)}</Badge>}
-                          {s.primeira && <Badge tone="slate" dot={false}><CalendarClock className="mr-1 inline h-3 w-3" />Admissão</Badge>}
-                          {s.fechado && <Badge tone="slate" dot={false}><Lock className="mr-1 inline h-3 w-3" />Fechado</Badge>}
-                        </p>
+        <section className="card overflow-hidden">
+          <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3 text-xs text-slate-500">
+            <span>{linhas.length} situação(ões) de {qtdColaboradores} colaborador(es)</span>
+            <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-primary-50 ring-1 ring-primary-200" /> vigente hoje</span>
+          </header>
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full min-w-[1100px] text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-2.5">Colaborador</th>
+                  <th className="px-3 py-2.5">De</th>
+                  <th className="px-3 py-2.5">Até</th>
+                  <th className="px-3 py-2.5">Situação</th>
+                  <th className="px-3 py-2.5">Cargo</th>
+                  <th className="px-3 py-2.5">Departamento</th>
+                  <th className="px-3 py-2.5">Jornada</th>
+                  <th className="px-3 py-2.5">Regra de cálculo</th>
+                  <th className="px-3 py-2.5 text-right">Salário</th>
+                  <th className="px-3 py-2.5">Motivo</th>
+                  <th className="px-3 py-2.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {linhas.map((x, i) => {
+                  const novoColaborador = i === 0 || linhas[i - 1].colaborador_id !== x.colaborador_id;
+                  return (
+                    <tr key={x.id} className={clsx(x.vigente && 'bg-primary-50/50', novoColaborador && i > 0 && 'border-t-2 border-slate-200')}>
+                      <td className="px-4 py-2.5 align-top">
+                        {novoColaborador ? (
+                          <>
+                            <p className="font-medium text-slate-800">{x.colaborador}</p>
+                            <p className="text-xs text-slate-400">Matrícula {x.matricula}</p>
+                          </>
+                        ) : (
+                          <span className="text-xs text-slate-300">〃</span>
+                        )}
                       </td>
-                      <td className="px-3 py-3 align-top">
-                        <Badge tone={SITUACAO[s.situacao].tone}>{SITUACAO[s.situacao].label}</Badge>
-                        {s.motivo && <p className="mt-1 max-w-[220px] text-xs text-slate-500">{s.motivo}</p>}
+                      <td className="whitespace-nowrap px-3 py-2.5 align-top tabular-nums text-slate-800">
+                        {dataBR(x.data_inicio)}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {x.primeira && <Badge tone="slate" dot={false}><CalendarClock className="mr-1 inline h-3 w-3" />Admissão</Badge>}
+                          {x.fechado && <Badge tone="slate" dot={false}><Lock className="mr-1 inline h-3 w-3" />Fechado</Badge>}
+                          {x.futura && <Badge tone="orange">Futura</Badge>}
+                        </div>
                       </td>
-                      <td className="px-3 py-3 align-top text-slate-700">
-                        <p>{s.cargo ?? '—'}</p>
-                        <p className="text-xs text-slate-500">{s.departamento ?? '—'}</p>
+                      <td className="whitespace-nowrap px-3 py-2.5 align-top tabular-nums text-slate-600">
+                        {x.data_fim ? dataBR(x.data_fim) : <span className="text-slate-400">em diante</span>}
                       </td>
-                      <td className="px-3 py-3 align-top text-slate-700">
-                        <p>{s.jornada ?? '—'}</p>
-                        <p className="text-xs text-slate-500">{s.perfil_evento ?? 'Regra padrão'}</p>
-                      </td>
-                      <td className="px-3 py-3 text-right align-top tabular-nums text-slate-700">{moeda(s.salario)}</td>
-                      <td className="px-3 py-3 align-top">
+                      <td className="px-3 py-2.5 align-top"><Badge tone={SITUACAO[x.situacao].tone}>{SITUACAO[x.situacao].label}</Badge></td>
+                      <td className="px-3 py-2.5 align-top text-slate-700">{x.cargo ?? '—'}</td>
+                      <td className="px-3 py-2.5 align-top text-slate-700">{x.departamento ?? '—'}</td>
+                      <td className="px-3 py-2.5 align-top text-slate-700">{x.jornada ?? '—'}</td>
+                      <td className="px-3 py-2.5 align-top text-slate-700">{x.perfil_evento ?? 'Regra padrão'}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-right align-top tabular-nums text-slate-700">{moeda(x.salario)}</td>
+                      <td className="max-w-[200px] px-3 py-2.5 align-top text-xs text-slate-500">{x.motivo ?? '—'}</td>
+                      <td className="px-3 py-2.5 align-top">
                         <div className="flex justify-end gap-1">
-                          <Button variant="ghost" className="h-8 px-2" onClick={() => setModal({ aberto: true, situacao: s, colaborador: s.colaborador_id })}
-                            title={`Lançada${s.usuario ? ` por ${s.usuario}` : ''} em ${dataHoraBR(s.created_at)}${s.alterado_por ? ` · alterada por ${s.alterado_por}` : ''}`}>
-                            <Pencil className="h-4 w-4" /> {podeEditar && !s.fechado ? 'Alterar' : 'Ver'}
+                          {podeEditar && novoColaborador && (
+                            <Button variant="ghost" className="h-8 px-2" title="Nova situação para este colaborador"
+                              onClick={() => setModal({ aberto: true, situacao: null, colaborador: x.colaborador_id })}>
+                              <Plus className="h-4 w-4" />
+                              <span className="sr-only">Nova situação</span>
+                            </Button>
+                          )}
+                          <Button variant="ghost" className="h-8 px-2" onClick={() => setModal({ aberto: true, situacao: x, colaborador: x.colaborador_id })}
+                            title={`Lançada${x.usuario ? ` por ${x.usuario}` : ''} em ${dataHoraBR(x.created_at)}${x.alterado_por ? ` · alterada por ${x.alterado_por}` : ''}`}>
+                            <Pencil className="h-4 w-4" /> {podeEditar && !x.fechado ? 'Alterar' : 'Ver'}
                           </Button>
-                          {podeEditar && !s.fechado && !s.primeira && (
-                            <Button variant="ghost" className="h-8 px-2 text-rose-600 hover:bg-rose-50" onClick={() => setExcluir(s)}>
+                          {podeEditar && !x.fechado && !x.primeira && (
+                            <Button variant="ghost" className="h-8 px-2 text-rose-600 hover:bg-rose-50" onClick={() => setExcluir(x)}>
                               <Trash2 className="h-4 w-4" />
                               <span className="sr-only">Excluir</span>
                             </Button>
@@ -434,13 +449,34 @@ export default function SituacoesColaborador() {
                         </div>
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
+
+      <Modal
+        aberto={escolher}
+        onFechar={() => setEscolher(false)}
+        titulo="Qual colaborador deseja consultar?"
+        descricao="Escolha um ou mais. Se fechar sem escolher, aparecem todos."
+        rodape={
+          <>
+            <Button variant="secondary" onClick={() => setEscolher(false)}>Ver todos</Button>
+            <Button onClick={confirmarEscolha} disabled={!escolhidos.length}>
+              <Search className="h-4 w-4" /> Consultar
+            </Button>
+          </>
+        }
+      >
+        <Field label="Colaborador">
+          <ComboboxChips opcoes={opcoesColaboradores(dados?.colaboradores)} valor={escolhidos} onChange={setEscolhidos}
+            placeholder="Buscar por nome ou matrícula…" rotuloTodos="Todos os colaboradores" />
+        </Field>
+        <div className="h-48" aria-hidden />
+      </Modal>
 
       <SituacaoModal
         aberto={modal.aberto}
