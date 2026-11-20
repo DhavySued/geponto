@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { AlertTriangle, CalendarHeart, ChevronLeft, ChevronRight, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, parseISODate } from '@/lib/format';
 import { feriadosNacionais } from '@/lib/hooks';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { Feriado } from '@/lib/types';
 
 const TIPOS: Record<Feriado['tipo'], { label: string; tone: BadgeTone }> = {
@@ -184,7 +184,7 @@ export default function Feriados() {
       ) : porMes.length === 0 ? (
         <div className="card">
           <EmptyState
-            icon={CalendarHeart}
+            icon={CalendarDays}
             titulo={`Nenhum feriado cadastrado em ${ano}`}
             descricao="Cadastre os feriados nacionais com um clique e inclua os estaduais e municipais da sua cidade."
           />

@@ -6,12 +6,13 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { semearEnderecos } from '@/lib/enderecos';
 import { formatData } from '@/lib/format';
 import { GEO_STATUS, textoDistancia } from '@/lib/geo';
-import { competencia, useFiltrosAux } from '@/lib/hooks';
+import { competencia, useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { ORIGEM_BATIDA } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { GeoStatus, LocaisBatidasRelatorio } from '@/lib/types';
 
 const SITUACOES: { valor: GeoStatus; label: string }[] = [
@@ -24,7 +25,7 @@ const SITUACOES: { valor: GeoStatus; label: string }[] = [
 export default function LocaisBatidas() {
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia());
-  const [filtros, setFiltros] = useState({ local: '', situacao: '' as GeoStatus | '', colaborador: '', departamento: '' });
+  const [filtros, setFiltros] = useState({ local: '', situacao: '' as GeoStatus | '', colaboradores: [] as string[], departamento: '' });
   const [dados, setDados] = useState<LocaisBatidasRelatorio | null>(null);
   const [ver, setVer] = useState<GeoStatus | ''>('');
   const [erro, setErro] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export default function LocaisBatidas() {
         p_fim: periodo.fim,
         p_local: filtros.local || null,
         p_situacao: filtros.situacao || null,
-        p_colaborador: filtros.colaborador || null,
+        p_colaboradores: paramColaboradores(filtros.colaboradores),
         p_departamento: filtros.departamento || null,
       });
       semearEnderecos(r.itens);
@@ -99,18 +100,14 @@ export default function LocaisBatidas() {
             </select>
           </Field>
           <Field label="Departamento">
-            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaborador: '' }))}>
+            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaboradores: [] }))}>
               <option value="">Todos</option>
               {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
             </select>
           </Field>
           <Field label="Colaborador">
-            <select className="input" value={filtros.colaborador} onChange={(e) => setFiltros((f) => ({ ...f, colaborador: e.target.value }))}>
-              <option value="">Todos</option>
-              {aux?.colaboradores
-                .filter((c) => !filtros.departamento || c.departamento_id === filtros.departamento)
-                .map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <ComboboxChips opcoes={opcoesColaboradores(aux?.colaboradores, filtros)} valor={filtros.colaboradores}
+              onChange={(v) => setFiltros((f) => ({ ...f, colaboradores: v }))} rotuloTodos="Todos os colaboradores" />
           </Field>
           <Button onClick={consultar} loading={carregando}>
             <Search className="h-4 w-4" /> Consultar

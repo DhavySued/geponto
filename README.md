@@ -1,6 +1,6 @@
 # GePonto — ERP de Controle de Ponto
 
-React 18 + Vite + TypeScript + Tailwind CSS, com Supabase (PostgreSQL) como banco.
+React 18 + Vite + TypeScript + Tailwind CSS, com PostgreSQL como banco (Supabase ou PostgREST próprio).
 
 ## Arquitetura de segurança
 
@@ -29,12 +29,18 @@ No **SQL Editor** do Supabase, execute nesta ordem:
 | `supabase/09_api_usuarios.sql` | Usuários & Permissões (perfis, abrangência, acessos em lote), dashboard pessoal e registro rápido de ponto |
 | `supabase/10_api_justificativas.sql` | Justificativas de atraso, saída antecipada e falta (só justificar ou abonar tudo/parte) |
 | `supabase/11_api_locais_batidas.sql` | Endereço da localização das batidas e relatório de locais das batidas |
+| `supabase/12_api_empresas.sql` | Cadastro de empresas (com o local de ponto), troca de empresa e configurações do registro de ponto |
+| `supabase/13_api_integracoes.sql` | API de integrações v1 (chaves de acesso, colaboradores, batidas, importação, totais e banco de horas) |
 | `supabase/99_admin.local.sql` | Usuário administrador (arquivo local, fora do Git) |
 
 Para remover os dados de exemplo, rode `supabase/limpar_dados_demo.sql`.
 
 Todos os scripts podem ser executados de novo sem erro. Para atualizar um banco existente, rode de novo
-01, 02, 03, 05, 06, 07, 08, 09, 10 e 11, nesta ordem.
+01, 02, 03, 05, 06, 07, 08, 09, 10, 11, 12 e 13, nesta ordem.
+
+**Atualizações incrementais:** cada mudança de banco também sai em `supabase/migracoes/NNN_descricao.sql`, só com o que mudou
+(funções novas ou alteradas, ajustes de tabelas e permissões). Para atualizar um banco que já está em uso, rode apenas
+as migrações que ainda não rodou, na ordem. Os scripts 01–13 continuam sendo a instalação completa de um banco novo.
 
 ### Acessos e permissões
 
@@ -144,6 +150,46 @@ npm install
 npm run dev
 ```
 
+### Backend independente de fornecedor
+
+As telas não conhecem o Supabase: todo acesso passa por `src/lib/api.ts`, que chama as funções `api_*` pelo
+contrato PostgREST (`POST {url}/rpc/{funcao}` com JSON). O `.env` escolhe o transporte:
+
+| Variáveis | Backend |
+|---|---|
+| `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase, pelo cliente oficial |
+| `VITE_API_URL` (+ `VITE_API_CHAVE`) | Qualquer servidor compatível: Supabase (`…/rest/v1`), PostgREST próprio ou outro backend que implemente o contrato |
+
+O SQL é PostgreSQL puro (só precisa do `pgcrypto` no schema `extensions` e dos papéis `anon`/`authenticated`),
+então pode rodar em qualquer Postgres 15+ com PostgREST na frente.
+
+## API de integrações (v1)
+
+Para relógios de ponto, folha de pagamento, ERPs e BI. As chaves são criadas em **Configurações › Integrações (API)**:
+cada chave é de uma empresa, tem permissões (`leitura` e/ou `batidas`) e aparece só uma vez (o banco guarda o hash).
+
+O gateway REST em `api-gateway/` (Node 18+, sem dependências) traduz as rotas para as funções `api_v1_*`:
+
+| Rota | Função |
+|---|---|
+| `GET /v1/empresa` | Dados da empresa da chave |
+| `GET /v1/colaboradores?situacao=&alterados_desde=` | Colaboradores (sincronização incremental) |
+| `GET /v1/batidas?inicio=&fim=&matricula=` | Batidas do período (até 62 dias) |
+| `POST /v1/batidas` | Importa batidas (por matrícula, CPF ou PIS); repetidas são ignoradas |
+| `GET /v1/totais?inicio=&fim=` | Totais por colaborador para a folha |
+| `GET /v1/banco-horas?data=` | Saldos do banco de horas |
+
+```bash
+cd api-gateway
+UPSTREAM_URL=https://SEU-PROJETO.supabase.co/rest/v1 UPSTREAM_KEY=sb_publishable_xxx node server.mjs
+# ou: docker build -f api-gateway/Dockerfile -t geponto-api .   (a partir da raiz)
+curl "http://localhost:8080/v1/colaboradores" -H "Authorization: Bearer gp_SUA_CHAVE"
+```
+
+Documentação OpenAPI: `docs/api/openapi.yaml` (servida pelo gateway em `/docs`). Erros vêm como
+`{ "erro": { "codigo", "mensagem" } }` com 400/401/403/404/429. Limite padrão: 120 requisições por minuto por chave.
+Para mostrar o endereço do gateway nos exemplos da tela de chaves, defina `VITE_API_PUBLICA_URL` no `.env`.
+
 ## Keep-alive (GitHub Actions)
 
 O arquivo é `.github/workflows/supabase-keep-alive.yml`. Ele roda todos os dias e chama a RPC `api_ping`.
@@ -155,9 +201,9 @@ Cadastre estes secrets no repositório: `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_K
 src/
   App.tsx                    rotas, guarda de sessão e de permissão
   contexts/AuthContext.tsx   login, logout, restauração de sessão e permissões
-  lib/                       cliente Supabase, helper api(), navegação, tipos e formatadores
+  lib/                       api.ts (transporte do backend e helper api()), navegação, tipos e formatadores
   components/layout/         MenuSuperior (menu no topo com submenus em cascata; acordeão no celular), AppLayout
-  components/ui/             Badge, Button, ContextMenu, EmptyState, Field, Modal, Toast
+  components/ui/             Badge, Button, ComboboxChips (seleção múltipla), ContextMenu, EmptyState, Field, Modal, Toast
   components/dashboard/      KPIs, gráfico de banco de horas, faltas e atrasos, ranking, registros do dia, painel pessoal
   components/                colaboradores, jornadas, perfis, meuponto, relatorios, tratamento, usuarios
   pages/                     uma tela por item do menu (lib/navigation.ts), Login e Status

@@ -1,0 +1,300 @@
+openapi: 3.0.3
+info:
+  title: GePonto API
+  version: "1.0"
+  description: |
+    API de integrações do GePonto para relógios de ponto (REP), folha de pagamento, ERPs e BI.
+
+    ## Autenticação
+    Crie uma chave em **Configurações › Integrações (API)** e envie em todas as chamadas:
+
+        Authorization: Bearer gp_xxxxxxxx…
+
+    Cada chave pertence a uma empresa e só enxerga os colaboradores dela. Permissões:
+    - `leitura`: colaboradores, batidas, totais e banco de horas
+    - `batidas`: importar batidas
+
+    A chave aparece uma única vez, ao ser criada. Se vazar, revogue e crie outra.
+
+    ## Convenções
+    - Datas no formato `AAAA-MM-DD`; data e hora em ISO 8601 com fuso (`2026-11-10T07:58:00-03:00`).
+    - Durações em minutos (campos `_min`).
+    - Consultas por período aceitam até 62 dias.
+    - Limite padrão: 120 requisições por minuto por chave (HTTP 429 com `Retry-After`).
+    - Erros: `{ "erro": { "codigo": "...", "mensagem": "..." } }`.
+  contact:
+    name: GePonto
+servers:
+  - url: http://localhost:8080
+    description: Gateway local (api-gateway/)
+security:
+  - chave: []
+tags:
+  - name: Cadastros
+  - name: Batidas
+  - name: Apuração
+paths:
+  /v1/empresa:
+    get:
+      tags: [Cadastros]
+      summary: Empresa da chave
+      responses:
+        "200":
+          description: Dados da empresa
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Empresa" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+  /v1/colaboradores:
+    get:
+      tags: [Cadastros]
+      summary: Lista os colaboradores
+      description: Use `alterados_desde` para sincronizar só o que mudou desde a última chamada.
+      parameters:
+        - name: situacao
+          in: query
+          schema: { type: string, enum: [ativo, afastado, ferias, desligado] }
+        - name: alterados_desde
+          in: query
+          description: Só os alterados a partir deste momento (ISO 8601)
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Colaboradores
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Colaborador" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+  /v1/batidas:
+    get:
+      tags: [Batidas]
+      summary: Batidas do período
+      description: Todas as batidas (originais, incluídas e desconsideradas) pelo dia de apuração.
+      parameters:
+        - { name: inicio, in: query, required: true, schema: { type: string, format: date } }
+        - { name: fim, in: query, required: true, schema: { type: string, format: date } }
+        - { name: colaborador_id, in: query, schema: { type: string, format: uuid } }
+        - { name: matricula, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Batidas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Batida" }
+        "400": { $ref: "#/components/responses/Invalida" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+    post:
+      tags: [Batidas]
+      summary: Importa batidas
+      description: |
+        Requer a permissão `batidas`. Identifique o colaborador por `matricula`, `cpf`, `pis` ou `colaborador_id`.
+        Batidas repetidas (mesmo colaborador e horário, ou mesmo NSR) são ignoradas, então reenviar é seguro.
+        Cada item com problema volta em `erros` sem impedir os demais. Até 5000 por chamada.
+        As batidas entram com origem `importacao` e são apuradas como as do relógio.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [batidas]
+              properties:
+                batidas:
+                  type: array
+                  maxItems: 5000
+                  items: { $ref: "#/components/schemas/BatidaImportar" }
+            example:
+              batidas:
+                - { matricula: "0001", data_hora: "2026-11-10T07:58:00-03:00", nsr: 123456 }
+                - { cpf: "12345678909", data_hora: "2026-11-10T12:01:00-03:00" }
+      responses:
+        "200":
+          description: Resultado da importação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResultadoImportacao" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/SemPermissao" }
+  /v1/totais:
+    get:
+      tags: [Apuração]
+      summary: Totais do período por colaborador (folha)
+      description: Apurado até ontem. Horas extras e faltas só de jornadas sem banco de horas.
+      parameters:
+        - { name: inicio, in: query, required: true, schema: { type: string, format: date } }
+        - { name: fim, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Totais
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Totais" }
+        "400": { $ref: "#/components/responses/Invalida" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+  /v1/banco-horas:
+    get:
+      tags: [Apuração]
+      summary: Saldos do banco de horas
+      parameters:
+        - name: data
+          in: query
+          description: Saldo acumulado até esta data (padrão: hoje)
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Saldos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: string, format: date }
+                  colaboradores:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        colaborador_id: { type: string, format: uuid }
+                        matricula: { type: string }
+                        nome: { type: string }
+                        saldo_min: { type: integer, description: "Positivo = crédito; negativo = débito" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+components:
+  securitySchemes:
+    chave:
+      type: http
+      scheme: bearer
+      description: Chave de API (gp_…)
+  responses:
+    NaoAutorizado:
+      description: Chave ausente, inválida ou revogada
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    SemPermissao:
+      description: A chave não tem a permissão necessária
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+    Invalida:
+      description: Parâmetros inválidos
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+  schemas:
+    Erro:
+      type: object
+      properties:
+        erro:
+          type: object
+          properties:
+            codigo: { type: string, example: nao_autorizado }
+            mensagem: { type: string }
+    Empresa:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        razao_social: { type: string }
+        nome_fantasia: { type: string, nullable: true }
+        cnpj: { type: string, example: "11222333000181" }
+        endereco: { type: string, nullable: true }
+    Colaborador:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        matricula: { type: string }
+        nome: { type: string }
+        nome_social: { type: string, nullable: true }
+        cpf: { type: string }
+        pis: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        cargo: { type: string, nullable: true }
+        departamento: { type: string, nullable: true }
+        jornada: { type: string, nullable: true }
+        data_admissao: { type: string, format: date }
+        data_desligamento: { type: string, format: date, nullable: true }
+        situacao: { type: string }
+        atualizado_em: { type: string, format: date-time }
+    Batida:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        colaborador_id: { type: string, format: uuid }
+        matricula: { type: string }
+        cpf: { type: string }
+        pis: { type: string, nullable: true }
+        data_hora: { type: string, format: date-time }
+        data_referencia: { type: string, format: date, description: Dia de apuração }
+        origem: { type: string, enum: [relogio, web, mobile, manual, importacao] }
+        status: { type: string, description: "valida ou desconsiderada" }
+        nsr: { type: integer, nullable: true }
+        latitude: { type: number, nullable: true }
+        longitude: { type: number, nullable: true }
+    BatidaImportar:
+      type: object
+      required: [data_hora]
+      description: Informe um identificador do colaborador (matricula, cpf, pis ou colaborador_id)
+      properties:
+        matricula: { type: string }
+        cpf: { type: string }
+        pis: { type: string }
+        colaborador_id: { type: string, format: uuid }
+        data_hora: { type: string, format: date-time }
+        nsr: { type: integer, description: Nº sequencial do REP }
+        latitude: { type: number }
+        longitude: { type: number }
+    ResultadoImportacao:
+      type: object
+      properties:
+        recebidas: { type: integer }
+        importadas: { type: integer }
+        repetidas: { type: integer }
+        erros:
+          type: array
+          items:
+            type: object
+            properties:
+              indice: { type: integer, description: Posição do item na lista (a partir de 0) }
+              erro: { type: string }
+    Totais:
+      type: object
+      properties:
+        periodo:
+          type: object
+          properties:
+            inicio: { type: string, format: date }
+            fim: { type: string, format: date }
+            apurado_ate: { type: string, format: date }
+        colaboradores:
+          type: array
+          items:
+            type: object
+            properties:
+              colaborador_id: { type: string, format: uuid }
+              matricula: { type: string }
+              nome: { type: string }
+              cpf: { type: string }
+              pis: { type: string, nullable: true }
+              dias_trabalhados: { type: integer }
+              previsto_min: { type: integer }
+              trabalhado_min: { type: integer }
+              horas_extras_min: { type: integer }
+              horas_extras_por_percentual:
+                type: array
+                nullable: true
+                items:
+                  type: object
+                  properties:
+                    percentual: { type: number }
+                    minutos: { type: integer }
+              adicional_noturno_min: { type: integer }
+              faltas_dias: { type: integer }
+              faltas_min: { type: integer }
+              atrasos_min: { type: integer }
+              dsr_perdidos: { type: integer }
+              banco_horas_periodo_min: { type: integer }
+              dias_inconsistentes: { type: integer, description: Dias com marcação incompleta }

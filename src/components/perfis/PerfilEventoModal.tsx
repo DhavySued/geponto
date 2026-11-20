@@ -6,7 +6,8 @@ import { AlertaErro, Field, Switch } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { completarPerfil, DIAS_HE, novoPerfilEvento } from '@/lib/perfilEvento';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
+import { formatMinutos } from '@/lib/format';
 import type { PerfilEvento } from '@/lib/types';
 
 export function PerfilEventoModal({
@@ -49,7 +50,7 @@ export function PerfilEventoModal({
     setSalvando(true);
     try {
       await api('api_perfil_evento_salvar', { p_dados: form });
-      toast(perfil?.id ? 'Perfil atualizado. O cálculo dos colaboradores com este perfil foi refeito.' : 'Perfil cadastrado.');
+      toast(perfil?.id ? 'Regra atualizada. O cálculo dos colaboradores com esta regra foi refeito.' : 'Regra cadastrada.');
       onSalvo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao salvar.');
@@ -63,7 +64,7 @@ export function PerfilEventoModal({
     setSalvando(true);
     try {
       await api('api_perfil_evento_excluir', { p_id: perfil.id });
-      toast('Perfil excluído.');
+      toast('Regra excluída.');
       onSalvo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao excluir.');
@@ -81,7 +82,7 @@ export function PerfilEventoModal({
       aberto={aberto}
       onFechar={onFechar}
       largura="max-w-4xl"
-      titulo={perfil?.id ? 'Editar perfil de eventos' : 'Novo perfil de eventos'}
+      titulo={perfil?.id ? 'Editar regra de cálculo' : 'Nova regra de cálculo'}
       descricao="Regras de cálculo do ponto: tolerâncias, hora extra por dia, adicional noturno e banco de horas."
       rodape={
         somenteLeitura ? (
@@ -95,7 +96,7 @@ export function PerfilEventoModal({
                 !perfil.padrao &&
                 (confirmarExclusao ? (
                   <div className="flex items-center gap-2 text-sm">
-                    <span className="text-slate-600">Excluir este perfil?</span>
+                    <span className="text-slate-600">Excluir esta regra?</span>
                     <Button variant="ghost" className="h-9 text-rose-600 hover:bg-rose-50" onClick={excluir} loading={salvando}>
                       Sim, excluir
                     </Button>
@@ -114,7 +115,7 @@ export function PerfilEventoModal({
                 Cancelar
               </Button>
               <Button variant="primary" onClick={salvar} loading={salvando}>
-                Salvar perfil
+                Salvar regra
               </Button>
             </div>
           </div>
@@ -125,7 +126,7 @@ export function PerfilEventoModal({
 
       <fieldset disabled={somenteLeitura} className="space-y-6">
         <div className="grid gap-4 sm:grid-cols-[1fr_1.4fr]">
-          <Field label="Nome do perfil" obrigatorio>
+          <Field label="Nome da regra" obrigatorio>
             <input className="input" value={form.nome} onChange={(e) => set('nome', e.target.value)}
               placeholder="Ex.: Comércio — HE 60%" autoFocus />
           </Field>
@@ -225,13 +226,25 @@ export function PerfilEventoModal({
 
           <div className="rounded-xl p-4 ring-1 ring-slate-200/80">
             <h3 className="text-sm font-semibold text-slate-800">Banco de horas e limite</h3>
-            <p className="mb-3 text-xs text-slate-500">Com banco de horas, o saldo do dia vai para o banco (hora por hora) em vez da folha.</p>
+            <p className="mb-3 text-xs text-slate-500">Com banco de horas, o saldo do dia vai para o banco em vez da folha.</p>
             <Switch
               ativo={form.usa_banco_horas}
               onChange={(v) => set('usa_banco_horas', v)}
               label="Usa banco de horas"
               descricao="Desligado: horas extras, faltas e atrasos vão para a folha."
             />
+            {form.usa_banco_horas && (
+              <div className="mt-3">
+                <Switch
+                  ativo={form.bh_multiplicar}
+                  onChange={(v) => set('bh_multiplicar', v)}
+                  label="Crédito com o percentual de hora extra"
+                  descricao={`As horas excedentes entram no banco com o percentual do dia (acima). Ex.: feriado a ${
+                    form.he.find((h) => h.dia === 7)?.percentual ?? 100}% → 8h trabalhadas viram ${
+                    formatMinutos(480 * (1 + (form.he.find((h) => h.dia === 7)?.percentual ?? 100) / 100))} no banco. Desligado: hora por hora. Débitos são sempre hora por hora.`}
+                />
+              </div>
+            )}
             <Field label="Limite de hora extra por dia (min)" className="mt-3"
               dica="Acima disso o dia aparece em Quebra de Regras (CLT art. 59: até 2h). 0 = sem limite.">
               <input type="number" min={0} className="input w-40" value={form.limite_he_diario_min}
@@ -271,19 +284,19 @@ export function PerfilEventoModal({
           <Switch
             ativo={form.padrao}
             onChange={(v) => set('padrao', v)}
-            label="Perfil padrão"
+            label="Regra padrão"
             descricao="Usado por quem é cadastrado sem escolher um perfil. Só um perfil é o padrão."
           />
           <Switch
             ativo={form.ativo}
             onChange={(v) => set('ativo', v)}
-            label="Perfil ativo"
-            descricao="Perfis inativos não aparecem no cadastro de colaboradores."
+            label="Regra ativa"
+            descricao="Regras inativas não aparecem no cadastro de colaboradores."
           />
         </div>
         {perfil?.padrao && (
           <p className="flex items-center gap-1.5 text-xs text-slate-500">
-            <Star className="h-3.5 w-3.5 text-accent-600" /> Para trocar o perfil padrão, marque outro perfil como padrão.
+            <Star className="h-3.5 w-3.5 text-accent-600" /> Para trocar a regra padrão, marque outra regra como padrão.
           </p>
         )}
       </fieldset>

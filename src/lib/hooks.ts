@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toISODate } from './format';
-import { api, supabase } from './supabase';
+import { api, rpc } from './api';
 import type { FiltrosAux } from './types';
 
 /** Colaboradores, departamentos e motivos para os filtros das telas de movimentos e relatórios. */
@@ -80,7 +80,7 @@ export function useHoraOficial() {
   useEffect(() => {
     const sincronizar = async () => {
       const inicio = Date.now();
-      const { data } = await supabase.rpc('api_hora_oficial');
+      const { data } = await rpc('api_hora_oficial');
       if (!data) return;
       const r = data as { agora: string; fuso: string };
       // Compensa metade do tempo de ida e volta da requisição
@@ -101,3 +101,18 @@ export function useHoraOficial() {
 
   return { agora, fuso };
 }
+
+/** Opções do filtro de colaboradores (ComboboxChips), opcionalmente só de um departamento */
+export function opcoesColaboradores(
+  lista: { id: string; nome: string; matricula: string; departamento_id?: string | null; cargo_id?: string | null; jornada_id?: string | null }[] | undefined,
+  filtro: { departamento?: string; cargo?: string; jornada?: string } = {},
+): { id: string; nome: string; detalhe: string }[] {
+  return (lista ?? [])
+    .filter((c) => (!filtro.departamento || c.departamento_id === filtro.departamento)
+      && (!filtro.cargo || c.cargo_id === filtro.cargo)
+      && (!filtro.jornada || c.jornada_id === filtro.jornada))
+    .map((c) => ({ id: c.id, nome: c.nome, detalhe: c.matricula }));
+}
+
+/** Parâmetro p_colaboradores das APIs: null = todos */
+export const paramColaboradores = (ids: string[]) => (ids.length ? ids : null);

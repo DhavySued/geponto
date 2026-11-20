@@ -8,7 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatMinutos } from '@/lib/format';
 import { DIAS_CURTOS, horarioTexto, resumoEscala } from '@/lib/jornada';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { Jornada } from '@/lib/types';
 
 function JornadaCard({ j, onAbrir }: { j: Jornada; onAbrir: () => void }) {
@@ -129,7 +129,7 @@ export default function Jornadas() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Jornadas e escalas</h2>
-          <p className="mt-1 text-sm text-slate-500">Horários das jornadas semanais e das escalas de revezamento (12x36, 5x1, 6x2…). As regras de cálculo ficam nos perfis de eventos.</p>
+          <p className="mt-1 text-sm text-slate-500">Horários das jornadas semanais e das escalas de revezamento (12x36, 5x1, 6x2…). As tolerâncias, extras e banco de horas ficam nas regras de cálculo.</p>
         </div>
         {podeEditar && (
           <Button variant="accent" onClick={novo}>

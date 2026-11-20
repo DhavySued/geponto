@@ -2,6 +2,7 @@ export type PaginaChave =
   | 'meu_ponto'
   | 'dashboard'
   | 'colaboradores'
+  | 'situacoes_colaborador'
   | 'usuarios'
   | 'jornadas'
   | 'perfis_eventos'
@@ -13,14 +14,16 @@ export type PaginaChave =
   | 'lancamento_manual'
   | 'espelho_ponto'
   | 'feriados'
-  | 'locais_ponto'
   | 'ocorrencias'
   | 'justificativas'
   | 'solicitacoes'
   | 'fechamento'
   | 'totais_periodo'
   | 'quebra_regras'
-  | 'locais_batidas';
+  | 'locais_batidas'
+  | 'empresas'
+  | 'configuracoes'
+  | 'integracoes';
 
 export interface Usuario {
   id: string;
@@ -31,6 +34,82 @@ export interface Usuario {
   trocar_senha: boolean;
   perfil: { id: string; nome: string; is_admin: boolean; abrangencia: Abrangencia };
   permissoes: Partial<Record<PaginaChave, { visualizar: boolean; editar: boolean }>>;
+  /** Empresa em que o usuário está conectado */
+  empresa: { id: string; nome: string; razao_social: string; cnpj: string | null } | null;
+  /** Empresas a que o usuário tem acesso */
+  empresas: EmpresaOpcao[];
+}
+
+export interface EmpresaOpcao {
+  id: string;
+  nome: string;
+  cidade?: string | null;
+  uf?: string | null;
+}
+
+/** Local de ponto da empresa (cerca virtual) */
+export interface LocalEmpresa {
+  latitude: number;
+  longitude: number;
+  raio_m: number;
+  precisao_m: number | null;
+}
+
+export interface Empresa {
+  id?: string;
+  razao_social: string;
+  nome_fantasia: string | null;
+  cnpj: string | null;
+  inscricao_estadual: string | null;
+  telefone: string | null;
+  email: string | null;
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  ativo: boolean;
+  local: LocalEmpresa | null;
+  colaboradores?: number;
+  batidas_30d?: number;
+  fora_30d?: number;
+}
+
+export interface EmpresasDados {
+  pode_editar: boolean;
+  atual: string | null;
+  usar_limitacoes_ponto: boolean;
+  empresas: Empresa[];
+}
+
+export type EscopoChave = 'leitura' | 'batidas';
+
+export interface ChaveApi {
+  id: string;
+  nome: string;
+  prefixo: string;
+  escopos: EscopoChave[];
+  ativo: boolean;
+  ultimo_uso: string | null;
+  criada_em: string;
+  revogada_em: string | null;
+  criado_por: string | null;
+}
+
+export interface IntegracoesDados {
+  pode_editar: boolean;
+  empresa: { id: string; razao_social: string; nome_fantasia: string | null } | null;
+  chaves: ChaveApi[];
+}
+
+export interface Configuracoes {
+  pode_editar: boolean;
+  usar_limitacoes_ponto: boolean;
+  bloquear_fora_cerca: boolean;
+  fuso_horario: string;
+  empresas: { id: string; nome: string; tem_local: boolean; raio_m: number | null }[];
 }
 
 /** Dados que o perfil enxerga: todos, a equipe do colaborador vinculado ou somente ele. */
@@ -165,11 +244,47 @@ export interface HistoricoItem {
   data_vigencia: string;
 }
 
-export interface JornadaVigencia {
+/** Situação do Colaborador: o que vale a partir de data_inicio até data_fim (a véspera da seguinte) */
+export interface ColaboradorSituacao {
+  id: string;
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
   data_inicio: string;
   data_fim: string | null;
-  jornada_id: string;
-  jornada: string;
+  situacao: SituacaoColaborador;
+  cargo_id: string | null;
+  cargo: string | null;
+  departamento_id: string | null;
+  departamento: string | null;
+  jornada_id: string | null;
+  jornada: string | null;
+  perfil_evento_id: string | null;
+  perfil_evento: string | null;
+  salario: number | null;
+  motivo: string | null;
+  /** A da admissão: não muda de data nem é excluída */
+  primeira: boolean;
+  vigente: boolean;
+  futura: boolean;
+  fechado: boolean;
+  usuario: string | null;
+  alterado_por: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SituacoesDados {
+  situacoes: ColaboradorSituacao[];
+  fechado_ate: string | null;
+  colaboradores: {
+    id: string; nome: string; matricula: string; situacao: SituacaoColaborador; data_admissao: string;
+    departamento_id: string | null; cargo_id: string | null; jornada_id: string | null;
+  }[];
+  cargos: Opcao[];
+  departamentos: Opcao[];
+  jornadas: Opcao[];
+  perfis_eventos: (Opcao & { padrao: boolean })[];
 }
 
 export interface AcessoColaborador {
@@ -182,6 +297,8 @@ export interface AcessoColaborador {
 
 export interface Colaborador {
   id?: string;
+  /** Empresa do colaborador; vazio = a empresa em que o usuário está conectado */
+  empresa_id: string;
   matricula: string;
   nome: string;
   nome_social: string;
@@ -212,10 +329,9 @@ export interface Colaborador {
   observacoes: string;
   controla_ponto: boolean;
   controle_ponto_inicio: string;
-  /** Data a partir da qual as alterações valem (histórico e jornada) */
-  data_vigencia: string;
   historico?: HistoricoItem[];
-  jornadas_vigencias?: JornadaVigencia[];
+  /** Situações (da mais recente para a mais antiga): só se alteram na Situação do Colaborador */
+  situacoes?: ColaboradorSituacao[];
   acesso?: AcessoColaborador | null;
 }
 
@@ -265,6 +381,8 @@ export interface PerfilEvento {
   tolerancia_modo: 'batida' | 'diaria';
   limite_he_diario_min: number;
   usa_banco_horas: boolean;
+  /** Crédito do banco multiplicado pelo percentual de hora extra do dia (feriado 100% → 8h viram 16h) */
+  bh_multiplicar: boolean;
   noturno_inicio: string;
   noturno_fim: string;
   percentual_noturno: number;
@@ -930,6 +1048,9 @@ export interface UsuarioSistema {
   colaborador_id: string | null;
   colaborador: string | null;
   matricula: string | null;
+  /** Empresas de acesso (além da empresa do colaborador vinculado) */
+  empresas: string[];
+  empresa_colaborador: string | null;
   ultimo_acesso: string | null;
   trocar_senha: boolean;
   bloqueado: boolean;
@@ -953,6 +1074,7 @@ export interface UsuariosDados {
   usuarios: UsuarioSistema[];
   perfis: PerfilAcesso[];
   paginas: { chave: PaginaChave; nome: string; grupo: string }[];
+  empresas: { id: string; nome: string; ativo: boolean }[];
   colaboradores: {
     id: string;
     nome: string;
@@ -1033,6 +1155,32 @@ export interface Escala extends HorarioDia {
   tipo: TipoEscala;
   observacao: string | null;
   usuario: string | null;
+  lancamento_id: string | null;
+  /** Nome da escala lançada */
+  nome: string | null;
+}
+
+/** Escala lançada: o registro com nome, período, dias da semana, horários e colaboradores */
+export interface EscalaLancamento extends HorarioDia {
+  id: string;
+  nome: string;
+  tipo: TipoEscala;
+  data_inicio: string;
+  data_fim: string;
+  dias_semana: number[];
+  observacao: string | null;
+  colaboradores: { id: string; nome: string; matricula: string }[];
+  dias: number;
+  fechado: boolean;
+  lancado_por: string | null;
+  lancado_em: string;
+  alterado_por: string | null;
+  alterado_em: string | null;
+}
+
+export interface EscalasLancamentos {
+  pode_editar: boolean;
+  escalas: EscalaLancamento[];
 }
 
 /** Um dia da grade: o padrão da jornada (sem a escala) e a escala lançada */

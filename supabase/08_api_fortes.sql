@@ -42,8 +42,7 @@ declare
                                                    'totais_periodo', 'quebra_regras', 'feriados', 'escalas', 'locais_batidas']);
 begin
   return jsonb_build_object(
-    'empresa', (select jsonb_build_object('razao_social', razao_social, 'nome_fantasia', nome_fantasia, 'cnpj', cnpj)
-                  from empresa where id = 1),
+    'empresa', fn_empresa_json(null),
     'colaboradores', coalesce((select jsonb_agg(jsonb_build_object(
                          'id', c.id, 'nome', c.nome, 'matricula', c.matricula, 'situacao', c.situacao,
                          'departamento_id', c.departamento_id, 'cargo_id', c.cargo_id, 'jornada_id', c.jornada_id)
@@ -126,9 +125,10 @@ end $$;
 -- -----------------------------------------------------------------------------
 -- Ocorrências (afastamentos, atestados, férias, folgas, faltas justificadas, abonos)
 -- -----------------------------------------------------------------------------
+drop function if exists api_ocorrencias_listar(text, date, date, uuid, uuid, text);
 create or replace function api_ocorrencias_listar(
   p_token text, p_ini date, p_fim date,
-  p_colaborador uuid default null, p_departamento uuid default null, p_tipo text default null)
+  p_colaborador uuid default null, p_departamento uuid default null, p_tipo text default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
   perform fn_auth(p_token, 'ocorrencias');
@@ -146,7 +146,7 @@ begin
       left join departamentos d on d.id = c.departamento_id
       left join usuarios u      on u.id = a.usuario_id
      where a.data_inicio <= p_fim and a.data_fim >= p_ini
-       and (p_colaborador is null or c.id = p_colaborador)
+       and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
        and (p_departamento is null or c.departamento_id = p_departamento)
        and (p_tipo is null or a.tipo::text = p_tipo)
        and fn_visivel(c.id)), '[]'::jsonb);
@@ -241,13 +241,15 @@ end $$;
 
 -- -----------------------------------------------------------------------------
 -- Escalas: previsão de trabalho ou folga em dias específicos, fora do padrão da jornada
---   trabalho → o dia passa a ter previsão normal (mesmo em folga da jornada ou feriado)
+--   trabalho → o dia passa a ter previsão normal (mesmo em folga da jornada); no feriado, a previsão vale
+--              e todo o tempo trabalhado é hora extra de feriado (dobro)
 --   folga    → o dia fica sem previsão (mesmo sendo dia de trabalho na jornada)
 -- -----------------------------------------------------------------------------
 
 -- Grade do período: por colaborador e dia, o padrão da jornada, o feriado e a escala lançada
+drop function if exists api_escalas_grade(text, date, date, uuid, uuid);
 create or replace function api_escalas_grade(
-  p_token text, p_ini date, p_fim date, p_departamento uuid default null, p_colaborador uuid default null)
+  p_token text, p_ini date, p_fim date, p_departamento uuid default null, p_colaborador uuid default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
   perform fn_auth(p_token, 'escalas');
@@ -277,7 +279,8 @@ begin
                           'retorno_intervalo', to_char(jd.retorno_intervalo, 'HH24:MI'),
                           'saida', to_char(jd.saida, 'HH24:MI'),
                           'escala', case when e.id is not null then jsonb_build_object(
-                                      'id', e.id, 'tipo', e.tipo,
+                                      'id', e.id, 'tipo', e.tipo, 'lancamento_id', e.lancamento_id,
+                                      'nome', (select l.nome from escala_lancamentos l where l.id = e.lancamento_id),
                                       'entrada', to_char(e.entrada, 'HH24:MI'),
                                       'saida_intervalo', to_char(e.saida_intervalo, 'HH24:MI'),
                                       'retorno_intervalo', to_char(e.retorno_intervalo, 'HH24:MI'),
@@ -297,38 +300,110 @@ begin
          and fn_visivel(c.id)
          and (c.data_desligamento is null or c.data_desligamento >= p_ini)
          and (p_departamento is null or c.departamento_id = p_departamento)
-         and (p_colaborador is null or c.id = p_colaborador)), '[]'::jsonb));
+         and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)), '[]'::jsonb));
 end $$;
 
--- Lança (ou substitui) a escala de vários colaboradores em vários dias.
--- p_dados: { colaboradores: [uuid], datas: [date], tipo: 'trabalho'|'folga',
+-- As escalas são lançadas como um registro (escala_lancamentos) com nome, período de até 30 dias,
+-- dias da semana, horários e colaboradores. O registro fica guardado e pode ser alterado ou excluído.
+drop function if exists api_escala_salvar(text, jsonb);
+drop function if exists api_escala_excluir(text, jsonb);
+
+create or replace function fn_escala_lancamento_json(l escala_lancamentos)
+returns jsonb language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'id', l.id, 'nome', l.nome, 'tipo', l.tipo, 'data_inicio', l.data_inicio, 'data_fim', l.data_fim,
+    'dias_semana', to_jsonb(l.dias_semana),
+    'entrada', to_char(l.entrada, 'HH24:MI'), 'saida_intervalo', to_char(l.saida_intervalo, 'HH24:MI'),
+    'retorno_intervalo', to_char(l.retorno_intervalo, 'HH24:MI'), 'saida', to_char(l.saida, 'HH24:MI'),
+    'observacao', l.observacao,
+    'colaboradores', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'nome', c.nome, 'matricula', c.matricula)
+                                                order by c.nome)
+                                 from colaboradores c where c.id = any(l.colaboradores) and fn_visivel(c.id)), '[]'::jsonb),
+    'dias', (select count(*) from escalas e where e.lancamento_id = l.id),
+    'fechado', exists (select 1 from escalas e where e.lancamento_id = l.id and fn_periodo_fechado(e.data)),
+    'lancado_por', (select nome from usuarios where id = l.usuario_id), 'lancado_em', l.created_at,
+    'alterado_por', (select nome from usuarios where id = l.alterado_por),
+    'alterado_em', case when l.updated_at > l.created_at + interval '1 second' then l.updated_at end);
+$$;
+
+-- Escalas lançadas que alcançam o período (com algum colaborador visível ao usuário)
+create or replace function api_escalas_lancamentos(
+  p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_busca text default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_usuario uuid := fn_auth(p_token, 'escalas');
+begin
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  return jsonb_build_object(
+    'pode_editar', fn_pode(v_usuario, 'escalas', true),
+    'escalas', coalesce((
+      select jsonb_agg(fn_escala_lancamento_json(l) order by l.data_inicio desc, l.nome)
+        from escala_lancamentos l
+       where l.data_inicio <= p_fim and l.data_fim >= p_ini
+         and exists (select 1 from unnest(l.colaboradores) x where fn_visivel(x)
+                        and (p_colaboradores is null or cardinality(p_colaboradores) = 0 or x = any(p_colaboradores)))
+         and (coalesce(trim(p_busca), '') = '' or l.nome ilike '%' || trim(p_busca) || '%'
+              or l.observacao ilike '%' || trim(p_busca) || '%')), '[]'::jsonb));
+end $$;
+
+create or replace function api_escala_lancamento(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  l escala_lancamentos;
+begin
+  perform fn_auth(p_token, 'escalas');
+  select * into l from escala_lancamentos where id = p_id;
+  if l.id is null then raise exception 'Escala não encontrada.'; end if;
+  return fn_escala_lancamento_json(l);
+end $$;
+
+-- Cria ou altera uma escala.
+-- p_dados: { id?, nome, tipo: 'trabalho'|'folga', data_inicio, data_fim, dias_semana: [0..6], colaboradores: [uuid],
 --            entrada?, saida_intervalo?, retorno_intervalo?, saida?, observacao? }
-create or replace function api_escala_salvar(p_token text, p_dados jsonb)
+create or replace function api_escala_lancamento_salvar(p_token text, p_dados jsonb)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_usuario uuid := fn_auth(p_token, 'escalas', true);
   d         jsonb := p_dados;
+  v_id      uuid := nullif(fn_txt(d, 'id'), '')::uuid;
+  v_antigo  escala_lancamentos;
+  v_nome    text := left(trim(coalesce(fn_txt(d, 'nome'), '')), 120);
   v_tipo    text := fn_txt(d, 'tipo');
+  v_ini     date := fn_txt(d, 'data_inicio')::date;
+  v_fim     date := fn_txt(d, 'data_fim')::date;
+  v_dias    smallint[];
+  v_colabs  uuid[];
   v_ent     time;
   v_si      time;
   v_ri      time;
   v_sai     time;
-  v_colabs  uuid[];
   v_datas   date[];
+  v_conf    record;
   v_qtd     integer;
 begin
-  if v_tipo is null or v_tipo not in ('trabalho', 'folga') then
-    raise exception 'Escolha se o dia é de trabalho ou de folga.';
-  end if;
+  if v_nome = '' then raise exception 'Dê um nome à escala (ex.: Plantão do feriado de novembro).'; end if;
+  if v_tipo is null or v_tipo not in ('trabalho', 'folga') then raise exception 'Escolha se é escala de trabalho ou de folga.'; end if;
+  if v_ini is null or v_fim is null or v_fim < v_ini then raise exception 'Informe o período da escala.'; end if;
+  if v_fim - v_ini > 29 then raise exception 'A escala pode ter no máximo 30 dias. Para um período maior, lance outra escala.'; end if;
+
+  select array_agg(distinct x::smallint order by x::smallint) into v_dias
+    from jsonb_array_elements_text(case when jsonb_typeof(d -> 'dias_semana') = 'array' then d -> 'dias_semana' else '[]' end) x
+   where x::int between 0 and 6;
+  if coalesce(array_length(v_dias, 1), 0) = 0 then raise exception 'Marque ao menos um dia da semana.'; end if;
+
   select array_agg(distinct x::uuid) into v_colabs
     from jsonb_array_elements_text(case when jsonb_typeof(d -> 'colaboradores') = 'array' then d -> 'colaboradores' else '[]' end) x;
-  select array_agg(distinct x::date) into v_datas
-    from jsonb_array_elements_text(case when jsonb_typeof(d -> 'datas') = 'array' then d -> 'datas' else '[]' end) x;
   if coalesce(array_length(v_colabs, 1), 0) = 0 then raise exception 'Selecione ao menos um colaborador.'; end if;
-  if coalesce(array_length(v_datas, 1), 0) = 0 then raise exception 'Selecione ao menos um dia.'; end if;
-  if array_length(v_datas, 1) > 366 then raise exception 'Selecione no máximo 366 dias.'; end if;
   if exists (select 1 from unnest(v_colabs) x where not fn_visivel(x)) then
     raise exception 'Há colaboradores fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+
+  if v_id is not null then
+    select * into v_antigo from escala_lancamentos where id = v_id for update;
+    if v_antigo.id is null then raise exception 'Escala não encontrada.'; end if;
+    -- Quem está na escala e fora da abrangência de quem altera continua nela
+    v_colabs := array(select distinct x from unnest(v_colabs || array(
+                  select y from unnest(v_antigo.colaboradores) y where not fn_visivel(y))) x);
   end if;
 
   if v_tipo = 'trabalho' then
@@ -336,14 +411,11 @@ begin
     v_si  := fn_txt(d, 'saida_intervalo')::time;
     v_ri  := fn_txt(d, 'retorno_intervalo')::time;
     v_sai := fn_txt(d, 'saida')::time;
-    if v_ent is null or v_sai is null then
-      raise exception 'Informe a entrada e a saída da escala de trabalho.';
-    end if;
+    if v_ent is null or v_sai is null then raise exception 'Informe a entrada e a saída da escala de trabalho.'; end if;
     if (v_si is null) <> (v_ri is null) then
       raise exception 'Informe a saída e o retorno do intervalo (ou deixe os dois em branco).';
     end if;
     if v_ent = v_sai then raise exception 'A entrada e a saída não podem ser iguais.'; end if;
-    -- marcações em sequência, podendo virar a meia-noite uma única vez
     if v_si is not null and
        (fn_minutos(v_ent, v_si) + fn_minutos(v_si, v_ri) + fn_minutos(v_ri, v_sai) <> fn_minutos(v_ent, v_sai)
         or v_si = v_ent or v_ri = v_si or v_sai = v_ri) then
@@ -351,39 +423,79 @@ begin
     end if;
   end if;
 
-  insert into escalas (colaborador_id, data, tipo, entrada, saida_intervalo, retorno_intervalo, saida, observacao, usuario_id)
-  select c, dt, v_tipo,
-         case when v_tipo = 'trabalho' then v_ent end, case when v_tipo = 'trabalho' then v_si end,
-         case when v_tipo = 'trabalho' then v_ri end,  case when v_tipo = 'trabalho' then v_sai end,
-         fn_txt(d, 'observacao'), v_usuario
+  select array_agg(g::date order by g) into v_datas
+    from generate_series(v_ini, v_fim, interval '1 day') g
+   where extract(dow from g)::smallint = any(v_dias);
+  if v_datas is null then raise exception 'Nenhum dia do período cai nos dias da semana marcados.'; end if;
+
+  -- Um colaborador só pode estar em uma escala por dia: avisa qual escala já ocupa o dia
+  select c.nome as colaborador, e.data, l.nome as escala into v_conf
+    from escalas e
+    join colaboradores c on c.id = e.colaborador_id
+    left join escala_lancamentos l on l.id = e.lancamento_id
+   where e.colaborador_id = any(v_colabs) and e.data = any(v_datas)
+     and e.lancamento_id is distinct from v_id
+   order by e.data, c.nome
+   limit 1;
+  if v_conf.colaborador is not null then
+    raise exception '% já está na escala "%" em %. Altere aquela escala ou escolha outro período.',
+      v_conf.colaborador, coalesce(v_conf.escala, 'sem nome'), to_char(v_conf.data, 'DD/MM/YYYY');
+  end if;
+
+  if v_id is null then
+    insert into escala_lancamentos (nome, tipo, data_inicio, data_fim, dias_semana, entrada, saida_intervalo,
+                                    retorno_intervalo, saida, observacao, colaboradores, usuario_id)
+    values (v_nome, v_tipo, v_ini, v_fim, v_dias, v_ent, v_si, v_ri, v_sai, nullif(trim(fn_txt(d, 'observacao')), ''),
+            v_colabs, v_usuario)
+    returning id into v_id;
+  else
+    update escala_lancamentos
+       set nome = v_nome, tipo = v_tipo, data_inicio = v_ini, data_fim = v_fim, dias_semana = v_dias,
+           entrada = v_ent, saida_intervalo = v_si, retorno_intervalo = v_ri, saida = v_sai,
+           observacao = nullif(trim(fn_txt(d, 'observacao')), ''), colaboradores = v_colabs, alterado_por = v_usuario
+     where id = v_id;
+    -- Dias que saíram da escala (o trigger de fechamento impede mexer em período fechado)
+    delete from escalas e
+     where e.lancamento_id = v_id
+       and not (e.colaborador_id = any(v_colabs) and e.data = any(v_datas));
+  end if;
+
+  insert into escalas (colaborador_id, data, tipo, entrada, saida_intervalo, retorno_intervalo, saida, observacao,
+                       usuario_id, lancamento_id)
+  select c, dt, v_tipo, v_ent, v_si, v_ri, v_sai, v_nome, v_usuario, v_id
     from unnest(v_colabs) c cross join unnest(v_datas) dt
   on conflict (colaborador_id, data) do update
      set tipo = excluded.tipo, entrada = excluded.entrada, saida_intervalo = excluded.saida_intervalo,
-         retorno_intervalo = excluded.retorno_intervalo, saida = excluded.saida,
-         observacao = excluded.observacao, usuario_id = excluded.usuario_id;
+         retorno_intervalo = excluded.retorno_intervalo, saida = excluded.saida, observacao = excluded.observacao,
+         usuario_id = excluded.usuario_id, lancamento_id = excluded.lancamento_id
+   where escalas.tipo is distinct from excluded.tipo or escalas.entrada is distinct from excluded.entrada
+      or escalas.saida_intervalo is distinct from excluded.saida_intervalo
+      or escalas.retorno_intervalo is distinct from excluded.retorno_intervalo
+      or escalas.saida is distinct from excluded.saida or escalas.observacao is distinct from excluded.observacao;
   get diagnostics v_qtd = row_count;
-  return jsonb_build_object('ok', true, 'qtd', v_qtd);
+  return jsonb_build_object('ok', true, 'id', v_id, 'dias', (select count(*) from escalas where lancamento_id = v_id));
 exception
   when invalid_datetime_format or datetime_field_overflow then raise exception 'Horário ou data inválida.';
   when invalid_text_representation then raise exception 'Dados inválidos.';
 end $$;
 
--- Remove a escala dos colaboradores nos dias informados: o dia volta ao padrão da jornada.
--- p_dados: { colaboradores: [uuid], datas: [date] }
-create or replace function api_escala_excluir(p_token text, p_dados jsonb)
+-- Exclui a escala: os dias voltam ao padrão da jornada
+create or replace function api_escala_lancamento_excluir(p_token text, p_id uuid)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
-  v_qtd integer;
+  l escala_lancamentos;
 begin
   perform fn_auth(p_token, 'escalas', true);
-  delete from escalas e
-   where e.colaborador_id in (select x::uuid from jsonb_array_elements_text(
-                                case when jsonb_typeof(p_dados -> 'colaboradores') = 'array' then p_dados -> 'colaboradores' else '[]' end) x)
-     and e.data in (select x::date from jsonb_array_elements_text(
-                      case when jsonb_typeof(p_dados -> 'datas') = 'array' then p_dados -> 'datas' else '[]' end) x)
-     and fn_visivel(e.colaborador_id);
-  get diagnostics v_qtd = row_count;
-  return jsonb_build_object('ok', true, 'qtd', v_qtd);
+  select * into l from escala_lancamentos where id = p_id for update;
+  if l.id is null then raise exception 'Escala não encontrada.'; end if;
+  if exists (select 1 from unnest(l.colaboradores) x where not fn_visivel(x)) then
+    raise exception 'A escala tem colaboradores fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+  if exists (select 1 from escalas e where e.lancamento_id = p_id and fn_periodo_fechado(e.data)) then
+    raise exception 'A escala alcança um período fechado. Reabra o período para excluí-la.';
+  end if;
+  delete from escala_lancamentos where id = p_id;   -- os dias saem junto (on delete cascade)
+  return jsonb_build_object('ok', true);
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -719,8 +831,9 @@ begin
   return v_out;
 end $$;
 
+drop function if exists api_espelho_ponto(text, date, date, uuid, uuid);
 create or replace function api_espelho_ponto(
-  p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null)
+  p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_usuario uuid := fn_auth(p_token, 'espelho_ponto');
@@ -730,8 +843,7 @@ begin
   perform fn_banco_horas_atualizar();
 
   return jsonb_build_object(
-    'empresa', (select jsonb_build_object('razao_social', razao_social, 'nome_fantasia', nome_fantasia,
-                                          'cnpj', cnpj, 'endereco', endereco) from empresa where id = 1),
+    'empresa', fn_empresa_json(null),
     'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim),
     'emitido_em', now(),
     'emitido_por', (select nome from usuarios where id = v_usuario),
@@ -739,7 +851,7 @@ begin
       select jsonb_agg(fn_espelho_colaborador(c.id, p_ini, p_fim) order by c.nome)
         from colaboradores c
        where c.controla_ponto
-         and (p_colaborador is null or c.id = p_colaborador)
+         and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
          and (p_departamento is null or c.departamento_id = p_departamento)
          and fn_visivel(c.id)
          and fn_inicio_controle(c) <= p_fim
@@ -758,8 +870,7 @@ begin
   if p_fim - p_ini > 62 then raise exception 'Selecione um período de até 2 meses.'; end if;
   perform fn_banco_horas_atualizar();
   return jsonb_build_object(
-    'empresa', (select jsonb_build_object('razao_social', razao_social, 'nome_fantasia', nome_fantasia,
-                                          'cnpj', cnpj, 'endereco', endereco) from empresa where id = 1),
+    'empresa', fn_empresa_json((select empresa_id from colaboradores where id = v_colab)),
     'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim),
     'emitido_em', now(),
     'emitido_por', (select nome from usuarios where id = v_usuario),
@@ -769,8 +880,9 @@ end $$;
 -- -----------------------------------------------------------------------------
 -- Totais do período (base da exportação para a folha) e eventos da folha
 -- -----------------------------------------------------------------------------
+drop function if exists api_totais_periodo(text, date, date, uuid, uuid);
 create or replace function api_totais_periodo(
-  p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null)
+  p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare
   v_usuario uuid := fn_auth(p_token, 'totais_periodo');
@@ -783,7 +895,7 @@ begin
   create temp table _tot on commit drop as
     select a.* from fn_apuracao(p_ini, least(p_fim, fn_hoje() - 1)) a
       join colaboradores c on c.id = a.colaborador_id
-     where (p_colaborador is null or c.id = p_colaborador)
+     where fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
        and (p_departamento is null or c.departamento_id = p_departamento)
        and fn_visivel(c.id);
 
@@ -819,7 +931,7 @@ begin
                           filter (where not t.banco_horas and not t.falta), 0)::int                as desconto_min,
                  -- DSR perdido: semanas (dom–sáb) com falta não justificada
                  count(distinct date_trunc('week', t.data + 1)) filter (where t.falta)            as dsr_perdidos,
-                 coalesce(sum(t.saldo_min) filter (where t.banco_horas), 0)::int                   as bh_periodo_min,
+                 coalesce(sum(t.banco_min) filter (where t.banco_horas), 0)::int                   as bh_periodo_min,
                  (select coalesce(sum(bh.minutos), 0) from banco_horas bh
                    where bh.colaborador_id = c.id and bh.data <= p_fim)::int                       as bh_saldo_min,
                  -- Conversões do banco de horas no período (menu Conversão do Banco de Horas)
@@ -859,8 +971,9 @@ end $$;
 -- jornada acima de 10h, hora extra acima do limite diário e marcação ímpar.
 -- O intervalo aceita a tolerância de entrada do perfil de eventos (ex.: 56 min com tolerância de 5 min não quebra).
 -- -----------------------------------------------------------------------------
+drop function if exists api_quebra_regras(text, date, date, uuid, uuid);
 create or replace function api_quebra_regras(
-  p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null)
+  p_token text, p_ini date, p_fim date, p_colaborador uuid default null, p_departamento uuid default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_usuario uuid := fn_auth(p_token, 'quebra_regras');
@@ -889,12 +1002,12 @@ begin
             ('jornada_maxima', a.trabalhado_min > greatest(600, a.previsto_min + coalesce(j.tolerancia_diaria_min, 0)),
              'Mais de 10h trabalhadas no dia (CLT art. 59)', a.trabalhado_min),
             ('limite_he', j.limite_he_diario_min > 0 and a.extra_min > j.limite_he_diario_min,
-             'Horas extras acima do limite diário do perfil de eventos', a.extra_min),
+             'Horas extras acima do limite diário da regra de cálculo', a.extra_min),
             ('marcacao_impar', a.ocorrencia = 'inconsistente',
              'Marcação ímpar: entrada sem saída ou saída sem entrada', null::int)
           ) q(regra, violou, detalhe, minutos)
          where q.violou
-           and (p_colaborador is null or c.id = p_colaborador)
+           and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
            and (p_departamento is null or c.departamento_id = p_departamento)
            and fn_visivel(c.id)
         union all
@@ -915,7 +1028,7 @@ begin
          where b.data_referencia between p_ini and least(p_fim, fn_hoje())
            and b.status = 'valida'
            and b.geo_status in ('fora', 'sem_localizacao')
-           and (p_colaborador is null or c.id = p_colaborador)
+           and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
            and (p_departamento is null or c.departamento_id = p_departamento)
            and fn_visivel(c.id)
       ) r), '[]'::jsonb);
@@ -938,12 +1051,14 @@ grant execute on function api_filtros_auxiliares(text)                          
 grant execute on function api_feriados_listar(text, integer)                           to anon, authenticated;
 grant execute on function api_feriado_salvar(text, jsonb)                              to anon, authenticated;
 grant execute on function api_feriado_excluir(text, uuid)                              to anon, authenticated;
-grant execute on function api_ocorrencias_listar(text, date, date, uuid, uuid, text)   to anon, authenticated;
+grant execute on function api_ocorrencias_listar(text, date, date, uuid, uuid, text, uuid[])   to anon, authenticated;
 grant execute on function api_ocorrencia_salvar(text, jsonb)                           to anon, authenticated;
 grant execute on function api_ocorrencia_excluir(text, uuid)                           to anon, authenticated;
-grant execute on function api_escalas_grade(text, date, date, uuid, uuid)              to anon, authenticated;
-grant execute on function api_escala_salvar(text, jsonb)                               to anon, authenticated;
-grant execute on function api_escala_excluir(text, jsonb)                              to anon, authenticated;
+grant execute on function api_escalas_grade(text, date, date, uuid, uuid, uuid[])              to anon, authenticated;
+grant execute on function api_escalas_lancamentos(text, date, date, uuid[], text)         to anon, authenticated;
+grant execute on function api_escala_lancamento(text, uuid)                              to anon, authenticated;
+grant execute on function api_escala_lancamento_salvar(text, jsonb)                      to anon, authenticated;
+grant execute on function api_escala_lancamento_excluir(text, uuid)                      to anon, authenticated;
 grant execute on function api_minhas_solicitacoes(text)                              to anon, authenticated;
 grant execute on function api_solicitacao_criar(text, jsonb)                           to anon, authenticated;
 grant execute on function api_solicitacao_cancelar(text, uuid)                         to anon, authenticated;
@@ -953,11 +1068,11 @@ grant execute on function api_fechamentos_listar(text)                          
 grant execute on function api_fechamento_previa(text, date, date)                      to anon, authenticated;
 grant execute on function api_fechamento_fechar(text, date, date, text)                to anon, authenticated;
 grant execute on function api_fechamento_reabrir(text, uuid)                           to anon, authenticated;
-grant execute on function api_espelho_ponto(text, date, date, uuid, uuid)              to anon, authenticated;
+grant execute on function api_espelho_ponto(text, date, date, uuid, uuid, uuid[])              to anon, authenticated;
 grant execute on function api_meu_espelho(text, date, date)                            to anon, authenticated;
-grant execute on function api_totais_periodo(text, date, date, uuid, uuid)             to anon, authenticated;
+grant execute on function api_totais_periodo(text, date, date, uuid, uuid, uuid[])             to anon, authenticated;
 grant execute on function api_eventos_folha_salvar(text, jsonb)                        to anon, authenticated;
-grant execute on function api_quebra_regras(text, date, date, uuid, uuid)              to anon, authenticated;
+grant execute on function api_quebra_regras(text, date, date, uuid, uuid, uuid[])              to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST) para as telas enxergarem as funções novas
 notify pgrst, 'reload schema';

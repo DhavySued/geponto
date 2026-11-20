@@ -9,9 +9,10 @@
 -- =============================================================================
 
 -- p_situacao: null (todas) · 'pendentes' (sem justificativa) · 'justificadas' · 'abonadas'
+drop function if exists api_justificativas_listar(text, date, date, uuid, uuid, text);
 create or replace function api_justificativas_listar(
   p_token text, p_ini date, p_fim date,
-  p_colaborador uuid default null, p_departamento uuid default null, p_situacao text default null)
+  p_colaborador uuid default null, p_departamento uuid default null, p_situacao text default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_fim    date;
@@ -27,7 +28,7 @@ begin
     select c.id, c.nome, c.matricula, d.nome as departamento
       from colaboradores c
       left join departamentos d on d.id = c.departamento_id
-     where (p_colaborador is null or c.id = p_colaborador)
+     where fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
        and (p_departamento is null or c.departamento_id = p_departamento)
        and fn_visivel(c.id);
 
@@ -154,7 +155,7 @@ end $$;
 -- -----------------------------------------------------------------------------
 -- Permissões
 -- -----------------------------------------------------------------------------
-grant execute on function api_justificativas_listar(text, date, date, uuid, uuid, text) to anon, authenticated;
+grant execute on function api_justificativas_listar(text, date, date, uuid, uuid, text, uuid[]) to anon, authenticated;
 grant execute on function api_justificativa_salvar(text, jsonb)                         to anon, authenticated;
 grant execute on function api_justificativa_excluir(text, uuid)                         to anon, authenticated;
 

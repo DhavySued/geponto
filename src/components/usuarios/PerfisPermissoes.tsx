@@ -7,7 +7,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { ABRANGENCIAS } from '@/lib/acesso';
 import { NAVEGACAO } from '@/lib/navigation';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { Abrangencia, PerfilAcesso, Permissoes, UsuariosDados } from '@/lib/types';
 
 interface Form {

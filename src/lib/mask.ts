@@ -18,3 +18,4 @@ export const mascaraTelefone = (v: string) =>
   aplicar(v, digitos(v).length > 10 ? '(##) #####-####' : '(##) ####-####');
 
 export const somenteDigitos = digitos;
+export const mascaraCNPJ = (v: string) => aplicar(v, '##.###.###/####-##');

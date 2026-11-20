@@ -3,7 +3,8 @@ import {
   ArrowRightLeft,
   BarChart3,
   CalendarClock,
-  CalendarHeart,
+  Building2,
+  CalendarDays,
   CalendarRange,
   CalendarSearch,
   ClipboardList,
@@ -12,16 +13,18 @@ import {
   FileText,
   Fingerprint,
   Hourglass,
+  KeyRound,
   LayoutDashboard,
   MessageSquareText,
   Lock,
-  MapPin,
   MapPinned,
   PenLine,
   Stethoscope,
   ShieldCheck,
+  Settings,
   SlidersHorizontal,
   Timer,
+  UserCog,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -76,10 +79,19 @@ export const NAVEGACAO: NavGroup[] = [
     itens: [
       {
         chave: 'colaboradores',
-        titulo: 'Colaboradores',
-        descricao: 'Dados pessoais e profissionais, situação e histórico',
+        titulo: 'Cadastro de Colaboradores',
+        descricao: 'Dados pessoais, endereço, acesso ao ponto e histórico',
         path: '/cadastros/colaboradores',
         icon: Users,
+        submenu: 'Colaboradores',
+      },
+      {
+        chave: 'situacoes_colaborador',
+        titulo: 'Situação do Colaborador',
+        descricao: 'Situação, cargo, departamento, jornada, regra de cálculo e salário a partir de uma data',
+        path: '/cadastros/colaboradores/situacoes',
+        icon: UserCog,
+        submenu: 'Colaboradores',
       },
       {
         chave: 'jornadas',
@@ -90,7 +102,7 @@ export const NAVEGACAO: NavGroup[] = [
       },
       {
         chave: 'perfis_eventos',
-        titulo: 'Perfis de Eventos',
+        titulo: 'Regras de Cálculo',
         descricao: 'Tolerâncias, percentual de hora extra por dia, adicional noturno e banco de horas',
         path: '/cadastros/perfis-eventos',
         icon: SlidersHorizontal,
@@ -100,14 +112,7 @@ export const NAVEGACAO: NavGroup[] = [
         titulo: 'Feriados',
         descricao: 'Feriados nacionais, estaduais, municipais e pontos facultativos',
         path: '/cadastros/feriados',
-        icon: CalendarHeart,
-      },
-      {
-        chave: 'locais_ponto',
-        titulo: 'Local de Ponto',
-        descricao: 'Local e raio onde o colaborador deve bater o ponto (cerca virtual)',
-        path: '/cadastros/locais-ponto',
-        icon: MapPin,
+        icon: CalendarDays,
       },
       {
         chave: 'usuarios',
@@ -218,10 +223,38 @@ export const NAVEGACAO: NavGroup[] = [
       },
     ],
   },
+  {
+    titulo: 'Configurações',
+    icon: Settings,
+    itens: [
+      {
+        chave: 'empresas',
+        titulo: 'Empresas',
+        descricao: 'Dados das empresas (CNPJ, endereço) e o local de ponto de cada uma',
+        path: '/configuracoes/empresas',
+        icon: Building2,
+      },
+      {
+        chave: 'configuracoes',
+        titulo: 'Registro de Ponto',
+        descricao: 'Limitações para o registro de ponto (cerca virtual)',
+        path: '/configuracoes/registro-ponto',
+        icon: Fingerprint,
+      },
+      {
+        chave: 'integracoes',
+        titulo: 'Integrações (API)',
+        descricao: 'Chaves de acesso para relógios, folha de pagamento e outros sistemas',
+        path: '/configuracoes/integracoes',
+        icon: KeyRound,
+      },
+    ],
+  },
 ];
 
 /** Ícones dos submenus em cascata */
 export const ICONES_SUBMENU: Record<string, LucideIcon> = {
+  Colaboradores: Users,
   Batidas: Fingerprint,
   'Banco de horas': Hourglass,
 };

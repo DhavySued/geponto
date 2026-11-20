@@ -7,16 +7,22 @@ insert into empresa (id, razao_social, nome_fantasia, fuso_horario)
 values (1, 'GePonto Ltda', 'GePonto', 'America/Sao_Paulo')
 on conflict (id) do nothing;
 
+-- Primeira empresa (cadastro de empresas) a partir dos dados gerais
+insert into empresas (razao_social, nome_fantasia, cnpj, logradouro)
+select razao_social, nome_fantasia, nullif(trim(cnpj), ''), endereco from empresa
+ where id = 1 and not exists (select 1 from empresas);
+update colaboradores set empresa_id = fn_empresa_padrao() where empresa_id is null;
+
 -- Páginas do ERP (usadas pelo menu e pelo controle de permissões)
 insert into paginas (chave, nome, grupo, ordem) values
   ('meu_ponto',          'Meu Ponto',                 'Meu Ponto',   5),
   ('dashboard',          'Dashboard',                 'Dashboard',  10),
   ('colaboradores',      'Colaboradores',             'Cadastros',  20),
+  ('situacoes_colaborador', 'Situação do Colaborador', 'Cadastros',  22),
   ('usuarios',           'Usuários & Permissões',     'Cadastros',  30),
   ('jornadas',           'Jornadas e Escalas',        'Cadastros',  40),
-  ('perfis_eventos',     'Perfis de Eventos',         'Cadastros',  42),
+  ('perfis_eventos',     'Regras de Cálculo',         'Cadastros',  42),
   ('feriados',           'Feriados',                  'Cadastros',  45),
-  ('locais_ponto',       'Local de Ponto',            'Cadastros',  47),
   ('batidas',            'Acompanhamento de Batidas', 'Movimentos', 50),
   ('banco_horas_conversao', 'Conversão do Banco de Horas', 'Movimentos', 62),
   ('banco_horas',        'Banco de Horas',            'Movimentos', 60),
@@ -30,9 +36,18 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('espelho_ponto',      'Espelho de Ponto',          'Relatórios', 80),
   ('totais_periodo',     'Totais e Exportação p/ Folha', 'Relatórios', 82),
   ('quebra_regras',      'Quebra de Regras',          'Relatórios', 84),
-  ('locais_batidas',     'Locais das Batidas',        'Relatórios', 86)
+  ('locais_batidas',     'Locais das Batidas',        'Relatórios', 86),
+  ('empresas',           'Empresas',                  'Configurações', 90),
+  ('configuracoes',      'Registro de Ponto',         'Configurações', 92),
+  ('integracoes',        'Integrações (API)',         'Configurações', 94)
 on conflict (chave) do update
   set nome = excluded.nome, grupo = excluded.grupo, ordem = excluded.ordem;
+
+-- O local de ponto foi para dentro do cadastro da empresa: quem cuidava dele passa a cuidar das empresas
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'empresas', pode_visualizar, pode_editar from perfil_permissoes where pagina = 'locais_ponto'
+on conflict (perfil_id, pagina) do nothing;
+delete from paginas where chave = 'locais_ponto';
 
 -- Perfis
 insert into perfis (nome, descricao, is_admin, abrangencia) values
@@ -72,8 +87,9 @@ select p.id, x.pagina, x.ver, x.editar
     ('Colaborador', 'meu_ponto', true, true),
     ('Colaborador', 'dashboard', true, false),
     ('RH', 'feriados', true, true),
-    ('RH', 'locais_ponto', true, true),
-    ('Gestor', 'locais_ponto', true, false),
+    ('RH', 'empresas', true, true),
+    ('RH', 'configuracoes', true, true),
+    ('RH', 'integracoes', true, true),
     ('RH', 'ocorrencias', true, true),
     ('RH', 'escalas', true, true),
     ('Gestor', 'escalas', true, false),
@@ -141,3 +157,9 @@ on conflict (data) do nothing;
 
 update feriados set tipo = 'facultativo'
  where tipo = 'nacional' and descricao like '%(ponto facultativo)';
+
+-- Situação do Colaborador: quem cuida do cadastro de colaboradores cuida também das situações
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'situacoes_colaborador', pode_visualizar, pode_editar
+  from perfil_permissoes where pagina = 'colaboradores'
+on conflict (perfil_id, pagina) do nothing;

@@ -6,26 +6,28 @@ import { BatidaChip, LegendaBatidas } from '@/components/tratamento/BatidaChip';
 import { useAcoesBatida } from '@/components/tratamento/useAcoesBatida';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
+import { opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { formatData, toISODate } from '@/lib/format';
 import { ORIGEM_BATIDA, SITUACAO_BATIDA, TIPOS_AUSENCIA, rotuloMarcacao, siglaMarcacao } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { ConsultaLinha, SituacaoBatida, TratamentoAux } from '@/lib/types';
 
 interface Filtros {
   ini: string;
   fim: string;
-  colaborador: string;
+  colaboradores: string[];
   departamento: string;
   cargo: string;
   jornada: string;
 }
 
 const hoje = () => toISODate(new Date());
-const filtrosIniciais = (): Filtros => ({ ini: hoje(), fim: hoje(), colaborador: '', departamento: '', cargo: '', jornada: '' });
+const filtrosIniciais = (): Filtros => ({ ini: hoje(), fim: hoje(), colaboradores: [], departamento: '', cargo: '', jornada: '' });
 const dataBR = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 export default function ConsultaBatidas() {
@@ -51,7 +53,7 @@ export default function ConsultaBatidas() {
         await api<ConsultaLinha[]>('api_consulta_batidas', {
           p_ini: f.ini,
           p_fim: f.fim,
-          p_colaborador: f.colaborador || null,
+          p_colaboradores: paramColaboradores(f.colaboradores),
           p_departamento: f.departamento || null,
           p_cargo: f.cargo || null,
           p_jornada: f.jornada || null,
@@ -99,7 +101,11 @@ export default function ConsultaBatidas() {
         hora(a).localeCompare(hora(b)),
     );
   }, [dados, situacao]);
-  const nomeColaborador = aux?.colaboradores.find((c) => c.id === filtros?.colaborador)?.nome;
+  // Um só colaborador marcado: o nome vai no título e a inclusão de batida já vem com ele
+  const unicoColaborador = filtros?.colaboradores.length === 1 ? filtros.colaboradores[0] : null;
+  const nomeColaborador = filtros && filtros.colaboradores.length > 1
+    ? `${filtros.colaboradores.length} colaboradores`
+    : aux?.colaboradores.find((c) => c.id === unicoColaborador)?.nome;
 
   return (
     <div className="space-y-6">
@@ -112,7 +118,7 @@ export default function ConsultaBatidas() {
         </div>
         <div className="flex gap-2">
           {aux?.pode_editar && filtros && (
-            <Button variant="secondary" onClick={() => acoes.incluir(filtros.colaborador || null, filtros.fim)}>
+            <Button variant="secondary" onClick={() => acoes.incluir(unicoColaborador, filtros.fim)}>
               <Plus className="h-4 w-4" /> Incluir batida
             </Button>
           )}
@@ -340,26 +346,14 @@ function FiltroModal({
   onAplicar: (f: Filtros) => void;
 }) {
   const [f, setF] = useState(inicial);
-  const [busca, setBusca] = useState('');
 
   useEffect(() => {
-    if (aberto) {
-      setF(inicial);
-      setBusca('');
-    }
+    if (aberto) setF(inicial);
     // Reinicia o formulário só quando o popup abre
   }, [aberto]);
 
   const set = (patch: Partial<Filtros>) => setF((atual) => ({ ...atual, ...patch }));
-  const termo = busca.trim().toLowerCase();
-  const colaboradores =
-    aux?.colaboradores.filter(
-      (c) =>
-        (!f.departamento || c.departamento_id === f.departamento) &&
-        (!f.cargo || c.cargo_id === f.cargo) &&
-        (!f.jornada || c.jornada_id === f.jornada) &&
-        (!termo || c.nome.toLowerCase().includes(termo) || c.matricula.toLowerCase().includes(termo)),
-    ) ?? [];
+  const colaboradores = opcoesColaboradores(aux?.colaboradores, f);
   const atalho = (dias: number) => {
     const d = new Date();
     d.setDate(d.getDate() - dias);
@@ -389,18 +383,8 @@ function FiltroModal({
         }}
       >
         <Field label="Colaborador">
-          <input
-            className="input mb-2"
-            placeholder="Buscar por nome ou matrícula…"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-          />
-          <select className="input" value={f.colaborador} onChange={(e) => set({ colaborador: e.target.value })}>
-            <option value="">Todos os colaboradores</option>
-            {colaboradores.map((c) => (
-              <option key={c.id} value={c.id}>{c.nome} · {c.matricula}</option>
-            ))}
-          </select>
+          <ComboboxChips opcoes={colaboradores} valor={f.colaboradores} onChange={(v) => set({ colaboradores: v })}
+            placeholder="Buscar por nome ou matrícula…" rotuloTodos="Todos os colaboradores" />
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -432,19 +416,19 @@ function FiltroModal({
           <summary className="cursor-pointer text-sm font-medium text-slate-600">Mais filtros</summary>
           <div className="mt-3 grid gap-4 sm:grid-cols-3">
             <Field label="Lotação">
-              <select className="input" value={f.departamento} onChange={(e) => set({ departamento: e.target.value, colaborador: '' })}>
+              <select className="input" value={f.departamento} onChange={(e) => set({ departamento: e.target.value, colaboradores: [] })}>
                 <option value="">Todas</option>
                 {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
               </select>
             </Field>
             <Field label="Cargo">
-              <select className="input" value={f.cargo} onChange={(e) => set({ cargo: e.target.value, colaborador: '' })}>
+              <select className="input" value={f.cargo} onChange={(e) => set({ cargo: e.target.value, colaboradores: [] })}>
                 <option value="">Todos</option>
                 {aux?.cargos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
               </select>
             </Field>
             <Field label="Jornada">
-              <select className="input" value={f.jornada} onChange={(e) => set({ jornada: e.target.value, colaborador: '' })}>
+              <select className="input" value={f.jornada} onChange={(e) => set({ jornada: e.target.value, colaboradores: [] })}>
                 <option value="">Todas</option>
                 {aux?.jornadas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
               </select>

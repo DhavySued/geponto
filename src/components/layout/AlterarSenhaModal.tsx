@@ -5,7 +5,7 @@ import { AlertaErro, Field } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 
 /**
  * Troca da própria senha. Com `obrigatorio`, aparece logo após o login de quem recebeu

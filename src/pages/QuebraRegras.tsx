@@ -5,9 +5,10 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { formatData, formatMinutos } from '@/lib/format';
-import { competencia, useFiltrosAux } from '@/lib/hooks';
-import { api } from '@/lib/supabase';
+import { competencia, useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
+import { api } from '@/lib/api';
 import type { QuebraRegra, RegraQuebrada } from '@/lib/types';
 
 const REGRAS: Record<RegraQuebrada, { label: string; tone: BadgeTone; medida: string }> = {
@@ -23,7 +24,7 @@ const REGRAS: Record<RegraQuebrada, { label: string; tone: BadgeTone; medida: st
 export default function QuebraRegras() {
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia());
-  const [filtros, setFiltros] = useState({ colaborador: '', departamento: '' });
+  const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [regra, setRegra] = useState<RegraQuebrada | ''>('');
   const [dados, setDados] = useState<QuebraRegra[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -37,7 +38,7 @@ export default function QuebraRegras() {
         await api<QuebraRegra[]>('api_quebra_regras', {
           p_ini: periodo.ini,
           p_fim: periodo.fim,
-          p_colaborador: filtros.colaborador || null,
+          p_colaboradores: paramColaboradores(filtros.colaboradores),
           p_departamento: filtros.departamento || null,
         }),
       );
@@ -74,18 +75,14 @@ export default function QuebraRegras() {
             <input type="date" className="input" value={periodo.fim} min={periodo.ini} onChange={(e) => e.target.value && setPeriodo((p) => ({ ...p, fim: e.target.value }))} />
           </Field>
           <Field label="Departamento">
-            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros({ departamento: e.target.value, colaborador: '' })}>
+            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros({ departamento: e.target.value, colaboradores: [] })}>
               <option value="">Todos</option>
               {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
             </select>
           </Field>
           <Field label="Colaborador">
-            <select className="input" value={filtros.colaborador} onChange={(e) => setFiltros((f) => ({ ...f, colaborador: e.target.value }))}>
-              <option value="">Todos</option>
-              {aux?.colaboradores
-                .filter((c) => !filtros.departamento || c.departamento_id === filtros.departamento)
-                .map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <ComboboxChips opcoes={opcoesColaboradores(aux?.colaboradores, filtros)} valor={filtros.colaboradores}
+              onChange={(v) => setFiltros((f) => ({ ...f, colaboradores: v }))} rotuloTodos="Todos os colaboradores" />
           </Field>
           <Button onClick={consultar} loading={carregando}>
             <Search className="h-4 w-4" /> Analisar

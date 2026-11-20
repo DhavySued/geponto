@@ -14,7 +14,7 @@ import {
   redimensionarCiclo,
   rotuloDiaJornada,
 } from '@/lib/jornada';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { Jornada, JornadaDia, TipoJornada } from '@/lib/types';
 
 const CAMPOS_HORARIO: { chave: keyof Pick<JornadaDia, 'entrada' | 'saida_intervalo' | 'retorno_intervalo' | 'saida'>; label: string }[] = [
@@ -405,8 +405,8 @@ export function JornadaModal({
           />
           <p className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500 ring-1 ring-slate-200/80">
             <SlidersHorizontal className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary-600" />
-            Tolerâncias, percentuais de hora extra, adicional noturno e banco de horas ficam no perfil de eventos de cada
-            colaborador (Cadastros › Perfis de Eventos).
+            Tolerâncias, percentuais de hora extra, adicional noturno e banco de horas ficam na regra de cálculo de cada
+            colaborador (Cadastros › Regras de Cálculo).
           </p>
         </div>
       </fieldset>

@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { AlertTriangle, Lock, Pencil, Plus, Search, Stethoscope, Trash2, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
@@ -9,9 +10,9 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, formatMinutos, horasParaMinutos, toISODate } from '@/lib/format';
-import { competencia, useFiltrosAux } from '@/lib/hooks';
+import { competencia, useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { TIPOS_AUSENCIA } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { FiltrosAux, Ocorrencia, TipoAusencia } from '@/lib/types';
 
 const dataCurta = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -242,7 +243,7 @@ export default function Ocorrencias() {
   const podeEditar = pode('ocorrencias', 'editar');
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia());
-  const [filtros, setFiltros] = useState({ colaborador: '', departamento: '', tipo: '' });
+  const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '', tipo: '' });
   const [lista, setLista] = useState<Ocorrencia[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -257,7 +258,7 @@ export default function Ocorrencias() {
         await api<Ocorrencia[]>('api_ocorrencias_listar', {
           p_ini: periodo.ini,
           p_fim: periodo.fim,
-          p_colaborador: filtros.colaborador || null,
+          p_colaboradores: paramColaboradores(filtros.colaboradores),
           p_departamento: filtros.departamento || null,
           p_tipo: filtros.tipo || null,
         }),
@@ -322,18 +323,14 @@ export default function Ocorrencias() {
             </select>
           </Field>
           <Field label="Departamento">
-            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaborador: '' }))}>
+            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaboradores: [] }))}>
               <option value="">Todos</option>
               {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
             </select>
           </Field>
           <Field label="Colaborador">
-            <select className="input" value={filtros.colaborador} onChange={(e) => setFiltros((f) => ({ ...f, colaborador: e.target.value }))}>
-              <option value="">Todos</option>
-              {aux?.colaboradores
-                .filter((c) => !filtros.departamento || c.departamento_id === filtros.departamento)
-                .map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <ComboboxChips opcoes={opcoesColaboradores(aux?.colaboradores, filtros)} valor={filtros.colaboradores}
+              onChange={(v) => setFiltros((f) => ({ ...f, colaboradores: v }))} rotuloTodos="Todos os colaboradores" />
           </Field>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">

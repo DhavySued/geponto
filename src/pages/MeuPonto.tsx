@@ -9,7 +9,7 @@ import { formatData, formatMinutos } from '@/lib/format';
 import { obterLocalizacao } from '@/lib/geo';
 import { ocorrencia, ORIGEM_BATIDA, rotuloMarcacao, SITUACAO_DIA_BATIDA } from '@/lib/ponto';
 import { useHoraOficial } from '@/lib/hooks';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { MeuPontoData, RegistroPonto } from '@/lib/types';
 
 function Indicador({ titulo, valor, detalhe, icon: Icon }: { titulo: string; valor: string; detalhe?: string; icon: typeof Timer }) {

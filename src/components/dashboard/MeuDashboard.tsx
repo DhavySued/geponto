@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, formatMinutos, numero, toISODate } from '@/lib/format';
 import { ocorrencia, rotuloMarcacao, siglaMarcacao } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { BatidaResumo, MeuDashboardData } from '@/lib/types';
 
 type Preset = 'hoje' | 'semana' | 'mes' | 'mes_anterior';

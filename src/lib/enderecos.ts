@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from './supabase';
+import { api } from './api';
 
 /** Endereço de uma coordenada (rua, número, bairro, cidade e UF) */
 export interface EnderecoGeo {
@@ -139,4 +139,56 @@ export function useEndereco(lat: number | null | undefined, lng: number | null |
   if (lat == null || lng == null) return null;
   const e = cache.get(chave(lat, lng));
   return e === 'pendente' || e === undefined ? undefined : e === 'vazio' ? null : e;
+}
+
+// ----- Cadastro da empresa: CEP e localização a partir do endereço -----
+
+/** Endereço pelo CEP (ViaCEP); null quando não encontrado */
+export async function buscarCep(cep: string): Promise<{ logradouro: string; bairro: string; cidade: string; uf: string } | null> {
+  const d = cep.replace(/\D/g, '');
+  if (d.length !== 8) return null;
+  const r = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+  if (!r.ok) return null;
+  const j = await r.json();
+  if (j?.erro) return null;
+  return { logradouro: j.logradouro ?? '', bairro: j.bairro ?? '', cidade: j.localidade ?? '', uf: j.uf ?? '' };
+}
+
+/**
+ * Coordenadas do endereço (OpenStreetMap). A precisão depende do cadastro do mapa: com número,
+ * costuma cair na porta; sem número, no meio da rua. Para precisão total, capture estando no local.
+ */
+export async function localizarEndereco(e: {
+  logradouro?: string | null;
+  numero?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  cep?: string | null;
+}): Promise<{ lat: number; lng: number; exato: boolean } | null> {
+  const buscar = async (params: Record<string, string>) => {
+    const q = new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'br', 'accept-language': 'pt-BR', ...params });
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?${q}`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j) && j[0] ? { lat: Number(Number(j[0].lat).toFixed(6)), lng: Number(Number(j[0].lon).toFixed(6)), tipo: String(j[0].type ?? '') } : null;
+  };
+  const rua = [e.numero, e.logradouro].filter(Boolean).join(' ');
+  const base: Record<string, string> = {};
+  if (e.cidade) base.city = e.cidade;
+  if (e.uf) base.state = e.uf;
+  // 1º: rua e número; 2º: só a rua; 3º: CEP
+  if (rua) {
+    const r = await buscar({ ...base, street: rua });
+    if (r) return { lat: r.lat, lng: r.lng, exato: !!e.numero && ['house', 'building', 'commercial', 'yes'].includes(r.tipo) };
+  }
+  if (e.logradouro && e.numero) {
+    const r = await buscar({ ...base, street: e.logradouro });
+    if (r) return { lat: r.lat, lng: r.lng, exato: false };
+  }
+  if (e.cep) {
+    const r = await buscar({ postalcode: e.cep, country: 'Brasil' });
+    if (r) return { lat: r.lat, lng: r.lng, exato: false };
+  }
+  return null;
 }

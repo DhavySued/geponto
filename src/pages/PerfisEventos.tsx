@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useAuth } from '@/contexts/AuthContext';
 import { DIAS_HE, textoPercentual } from '@/lib/perfilEvento';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { PerfilEvento } from '@/lib/types';
 
 function PerfilCard({ p, onAbrir }: { p: PerfilEvento; onAbrir: () => void }) {
@@ -98,14 +98,14 @@ export default function PerfisEventos() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Perfis de eventos</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Regras de cálculo</h2>
           <p className="mt-1 text-sm text-slate-500">
             Regras de cálculo do ponto de cada colaborador: tolerâncias, percentual de hora extra por dia (com feriado e folga), adicional noturno e banco de horas.
           </p>
         </div>
         {podeEditar && (
           <Button variant="accent" onClick={novo}>
-            <Plus className="h-4 w-4" /> Novo perfil
+            <Plus className="h-4 w-4" /> Nova regra
           </Button>
         )}
       </div>

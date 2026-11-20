@@ -11,7 +11,7 @@ import { SituacaoColaboradores } from '@/components/dashboard/SituacaoColaborado
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatMinutos, numero, toISODate } from '@/lib/format';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { DashboardData } from '@/lib/types';
 
 type Preset = 'mes' | 'mes_anterior' | '30d' | 'personalizado';

@@ -21,7 +21,7 @@ import { useToast } from '@/components/ui/Toast';
 import { formatData, parseISODate, toISODate } from '@/lib/format';
 import { linkMapa } from '@/lib/geo';
 import { CLASSIFICACOES, rotuloMarcacao } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { BatidaTratamento, HistoricoBatida, Sentido, TratamentoAux } from '@/lib/types';
 import { STATUS_BATIDA } from './BatidaChip';
 

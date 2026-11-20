@@ -3,6 +3,8 @@ import { AlertTriangle, ArrowRightLeft, Filter, Hourglass, Plus, FileDown, Searc
 import { useNavigate } from 'react-router-dom';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
+import { paramColaboradores } from '@/lib/hooks';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AlertaErro, Field } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
@@ -11,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatData, formatMinutos, horasParaMinutos, toISODate } from '@/lib/format';
 import { ORIGEM_BATIDA, ocorrencia, rotuloMarcacao, siglaMarcacao } from '@/lib/ponto';
 import { gerarPdfBancoHoras } from '@/lib/pdfBancoHoras';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { BancoHorasDetalhe, BancoHorasDia, BancoHorasResumo, TipoLancamento } from '@/lib/types';
 
 const TIPOS: Record<TipoLancamento, { label: string; descricao: string }> = {
@@ -184,7 +186,7 @@ function notaDoDia(d: BancoHorasDia): string | null {
 interface FiltroBH {
   ini: string;
   fim: string;
-  colaborador: string;
+  colaboradores: string[];
 }
 
 function FiltroModal({
@@ -205,18 +207,12 @@ function FiltroModal({
   onAplicar: (f: FiltroBH) => void;
 }) {
   const [f, setF] = useState(inicial);
-  const [busca, setBusca] = useState('');
 
   useEffect(() => {
-    if (aberto) {
-      setF(inicial);
-      setBusca('');
-    }
+    if (aberto) setF(inicial);
     // Reinicia o formulário só quando o popup abre
   }, [aberto]);
 
-  const termo = busca.trim().toLowerCase();
-  const lista = colaboradores.filter((c) => !termo || c.nome.toLowerCase().includes(termo) || c.matricula.toLowerCase().includes(termo));
   const hoje = toISODate(new Date());
   const atalhos: [string, () => FiltroBH][] = [
     ['Este mês', () => ({ ...f, ini: primeiroDoMes(), fim: hoje })],
@@ -254,11 +250,9 @@ function FiltroModal({
         }}
       >
         <Field label="Colaborador">
-          <input className="input mb-2" placeholder="Buscar por nome ou matrícula…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-          <select className="input" value={f.colaborador} onChange={(e) => setF({ ...f, colaborador: e.target.value })}>
-            <option value="">Todos os colaboradores</option>
-            {lista.map((c) => <option key={c.id} value={c.id}>{c.nome} · {c.matricula}</option>)}
-          </select>
+          <ComboboxChips opcoes={colaboradores.map((c) => ({ id: c.id, nome: c.nome, detalhe: c.matricula }))}
+            valor={f.colaboradores} onChange={(v) => setF({ ...f, colaboradores: v })}
+            placeholder="Buscar por nome ou matrícula…" rotuloTodos="Todos os colaboradores" />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Data inicial">
@@ -460,7 +454,7 @@ export default function BancoHoras() {
         await api<BancoHorasDetalhe[]>('api_banco_horas_detalhe', {
           p_ini: f.ini,
           p_fim: f.fim,
-          p_colaborador: f.colaborador || null,
+          p_colaboradores: paramColaboradores(f.colaboradores),
         }),
       );
       return true;
@@ -513,7 +507,10 @@ export default function BancoHoras() {
     }
   };
 
-  const nomeColaborador = lista.find((c) => c.id === filtro?.colaborador)?.nome;
+  const unicoColaborador = filtro?.colaboradores.length === 1 ? filtro.colaboradores[0] : null;
+  const nomeColaborador = filtro && filtro.colaboradores.length > 1
+    ? `${filtro.colaboradores.length} colaboradores`
+    : lista.find((c) => c.id === unicoColaborador)?.nome;
 
   return (
     <div className="space-y-6">
@@ -531,7 +528,7 @@ export default function BancoHoras() {
             </Button>
           )}
           {podeEditar && (
-            <Button variant="secondary" onClick={() => setLancamento({ aberto: true, colaborador: filtro?.colaborador || null })} disabled={!lista.length}>
+            <Button variant="secondary" onClick={() => setLancamento({ aberto: true, colaborador: unicoColaborador })} disabled={!lista.length}>
               <Plus className="h-4 w-4" /> Novo lançamento
             </Button>
           )}
@@ -625,7 +622,7 @@ export default function BancoHoras() {
       <FiltroModal
         aberto={filtroAberto}
         colaboradores={lista}
-        inicial={filtro ?? { ini: primeiroDoMes(), fim: toISODate(new Date()), colaborador: '' }}
+        inicial={filtro ?? { ini: primeiroDoMes(), fim: toISODate(new Date()), colaboradores: [] }}
         carregando={carregando}
         erro={filtroAberto ? erro : null}
         onFechar={() => setFiltroAberto(false)}

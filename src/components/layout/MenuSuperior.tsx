@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { CalendarDays, ChevronDown, ChevronRight, KeyRound, LogOut, Menu, X } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronDown, ChevronRight, KeyRound, LogOut, Menu, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -232,8 +232,63 @@ function MenuMovel({ grupos, onFechar }: { grupos: NavGroup[]; onFechar: () => v
   );
 }
 
+/** Empresa em que o usuário está conectado; troca entre as empresas a que ele tem acesso */
+function SeletorEmpresa() {
+  const { usuario, trocarEmpresa } = useAuth();
+  const [aberto, setAberto] = useState(false);
+  const [trocando, setTrocando] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const fora = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setAberto(false);
+    document.addEventListener('mousedown', fora);
+    return () => document.removeEventListener('mousedown', fora);
+  }, []);
+
+  if (!usuario?.empresa) return null;
+  const varias = usuario.empresas.length > 1;
+  const trocar = async (id: string) => {
+    if (id === usuario.empresa?.id) return setAberto(false);
+    setTrocando(id);
+    try {
+      await trocarEmpresa(id);
+    } catch {
+      setTrocando(null);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => varias && setAberto((v) => !v)}
+        className={clsx('flex max-w-[220px] items-center gap-2 rounded-xl bg-white/[0.08] px-3 py-2 text-left text-xs font-medium text-white/90',
+          varias ? 'hover:bg-white/[0.14]' : 'cursor-default')}
+        title={usuario.empresa.razao_social}
+        aria-expanded={aberto}
+      >
+        <Building2 className="h-4 w-4 shrink-0 text-accent-400" />
+        <span className="truncate">{usuario.empresa.nome}</span>
+        {varias && <ChevronDown className="h-3.5 w-3.5 shrink-0 text-white/60" />}
+      </button>
+      {aberto && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl bg-white p-2 text-slate-700 shadow-2xl ring-1 ring-slate-200/70">
+          <p className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">Trocar de empresa</p>
+          {usuario.empresas.map((e) => (
+            <button key={e.id} onClick={() => trocar(e.id)} disabled={!!trocando}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-slate-50 disabled:opacity-60">
+              <span className="min-w-0 flex-1 truncate">{e.nome}</span>
+              {e.id === usuario.empresa?.id && <Check className="h-4 w-4 text-primary-600" />}
+              {trocando === e.id && <span className="text-xs text-slate-400">abrindo…</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void }) {
-  const { usuario, pode, sair } = useAuth();
+  const { usuario, pode, sair, trocarEmpresa } = useAuth();
   const { pathname } = useLocation();
   const [grupoAberto, setGrupoAberto] = useState<string | null>(null);
   const [movelAberto, setMovelAberto] = useState(false);
@@ -314,9 +369,12 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
         </nav>
         <div className="flex-1 lg:hidden" />
 
-        <div className="hidden items-center gap-2 rounded-xl bg-white/[0.08] px-3 py-2 text-xs font-medium capitalize text-white/70 xl:flex">
+        <div className="hidden items-center gap-2 rounded-xl bg-white/[0.08] px-3 py-2 text-xs font-medium capitalize text-white/70 2xl:flex">
           <CalendarDays className="h-4 w-4 text-accent-400" />
           {hoje}
+        </div>
+        <div className="hidden sm:block">
+          <SeletorEmpresa />
         </div>
 
         {usuario && (
@@ -340,7 +398,18 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
                 <div className="px-3 py-2 sm:hidden">
                   <p className="truncate text-sm font-medium text-slate-900">{usuario.nome}</p>
                   <p className="truncate text-xs text-slate-400">{usuario.perfil.nome}</p>
+                  {usuario.empresa && <p className="mt-1 truncate text-xs text-slate-500">{usuario.empresa.nome}</p>}
                 </div>
+                {usuario.empresas.length > 1 && (
+                  <div className="border-b border-slate-100 pb-1 sm:hidden">
+                    {usuario.empresas.filter((e) => e.id !== usuario.empresa?.id).map((e) => (
+                      <button key={e.id} onClick={() => trocarEmpresa(e.id)}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-slate-50">
+                        <Building2 className="h-4 w-4 text-slate-400" /> <span className="truncate">Trocar para {e.nome}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button
                   onClick={() => {
                     setContaAberta(false);

@@ -8,7 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, iniciais } from '@/lib/format';
 import { mascaraCPF } from '@/lib/mask';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { ColaboradorResumo, SituacaoColaborador } from '@/lib/types';
 
 type Filtro = 'todos' | SituacaoColaborador;

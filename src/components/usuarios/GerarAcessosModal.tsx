@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { ResultadoAcessos, UsuariosDados } from '@/lib/types';
 
 /** Cria de uma vez o login de cada colaborador que ainda não tem acesso. */

@@ -24,6 +24,7 @@ export function novoPerfilEvento(): PerfilEvento {
     tolerancia_modo: 'batida',
     limite_he_diario_min: 120,
     usa_banco_horas: true,
+    bh_multiplicar: true,
     noturno_inicio: '22:00',
     noturno_fim: '05:00',
     percentual_noturno: 20,
@@ -39,6 +40,7 @@ export function completarPerfil(p: PerfilEvento): PerfilEvento {
   return {
     ...p,
     tolerancia_modo: p.tolerancia_modo ?? 'batida',
+    bh_multiplicar: p.bh_multiplicar ?? true,
     he: DIAS_HE.map(({ dia }) => ({ dia, percentual: pct(dia) ?? (dia === 8 ? pct(0) ?? 100 : 50) })),
   };
 }

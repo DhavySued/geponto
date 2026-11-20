@@ -123,7 +123,8 @@ begin
   return jsonb_build_object(
     'pode_editar', fn_pode(v_usuario, 'lancamento_manual', true),
     'estabelecimentos', (select jsonb_agg(jsonb_build_object('id', id::text,
-                                  'nome', coalesce(nome_fantasia, razao_social))) from empresa),
+                                  'nome', coalesce(nome_fantasia, razao_social)))
+                           from empresas where id = coalesce(fn_empresa_atual(), fn_empresa_padrao())),
     'colaboradores', coalesce((select jsonb_agg(jsonb_build_object(
                          'id', c.id, 'nome', c.nome, 'matricula', c.matricula, 'situacao', c.situacao,
                          'departamento_id', c.departamento_id, 'cargo_id', c.cargo_id, 'jornada_id', c.jornada_id)
@@ -140,9 +141,10 @@ begin
 end $$;
 
 -- Tela de Tratamento Individual: lista de batidas com filtros
+drop function if exists api_tratamento_batidas(text, date, date, uuid, uuid, text);
 create or replace function api_tratamento_batidas(
   p_token text, p_ini date, p_fim date,
-  p_colaborador uuid default null, p_departamento uuid default null, p_status text default 'todas')
+  p_colaborador uuid default null, p_departamento uuid default null, p_status text default 'todas', p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
   perform fn_auth_tratamento_leitura(p_token);
@@ -162,6 +164,7 @@ begin
       left join departamentos d on d.id = c.departamento_id
       left join motivos_batida m on m.id = b.motivo_id
      where (p_departamento is null or c.departamento_id = p_departamento)
+       and fn_filtro_colaborador(c.id, null, p_colaboradores)
        and (coalesce(p_status, 'todas') = 'todas' or fn_status_batida(b.origem, b.status) = p_status)
        and fn_visivel(c.id)
   ), '[]'::jsonb);
@@ -178,10 +181,11 @@ end $$;
 --   saída:   saida_antecipada (antes do previsto) · apos_previsto (depois do previsto)
 -- Marcações previstas sem batida (dias de trabalho, fora feriados e ausências):
 --   nao_registrada (o horário já passou) · pendente (ainda vai acontecer)
+drop function if exists api_consulta_batidas(text, date, date, uuid, uuid, uuid, uuid);
 create or replace function api_consulta_batidas(
   p_token text, p_ini date, p_fim date,
   p_colaborador uuid default null, p_departamento uuid default null,
-  p_cargo uuid default null, p_jornada uuid default null)
+  p_cargo uuid default null, p_jornada uuid default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_tz    text := fn_fuso();
@@ -200,7 +204,7 @@ begin
       select c.*, d.nome as departamento
         from colaboradores c
         left join departamentos d on d.id = c.departamento_id
-       where (p_colaborador  is null or c.id = p_colaborador)
+       where fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
          and (p_departamento is null or c.departamento_id = p_departamento)
          and (p_cargo        is null or c.cargo_id = p_cargo)
          and (p_jornada      is null or c.jornada_id = p_jornada)
@@ -623,8 +627,8 @@ revoke execute on function fn_motivo_valido(uuid, text)                       fr
 revoke execute on function fn_data_hora_local(date, text)                     from public, anon, authenticated;
 
 grant execute on function api_tratamento_auxiliares(text)                                   to anon, authenticated;
-grant execute on function api_tratamento_batidas(text, date, date, uuid, uuid, text)        to anon, authenticated;
-grant execute on function api_consulta_batidas(text, date, date, uuid, uuid, uuid, uuid)    to anon, authenticated;
+grant execute on function api_tratamento_batidas(text, date, date, uuid, uuid, text, uuid[])        to anon, authenticated;
+grant execute on function api_consulta_batidas(text, date, date, uuid, uuid, uuid, uuid, uuid[])    to anon, authenticated;
 grant execute on function api_batida_historico(text, uuid)                                  to anon, authenticated;
 grant execute on function api_batida_incluir(text, uuid, date, text, uuid, text, date, text, integer) to anon, authenticated;
 grant execute on function api_batida_classificar(text, uuid, text, integer)                  to anon, authenticated;

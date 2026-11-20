@@ -11,7 +11,7 @@ import { PerfisPermissoes } from '@/components/usuarios/PerfisPermissoes';
 import { UsuarioModal } from '@/components/usuarios/UsuarioModal';
 import { ABRANGENCIAS, STATUS_USUARIO } from '@/lib/acesso';
 import { iniciais } from '@/lib/format';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { UsuarioSistema, UsuariosDados } from '@/lib/types';
 
 type Aba = 'usuarios' | 'perfis';

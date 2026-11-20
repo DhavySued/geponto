@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, formatMinutos, horasParaMinutos, toISODate } from '@/lib/format';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { ConversaoBH, ConversaoBHHistorico } from '@/lib/types';
 
 type Converter = 'positivo' | 'negativo' | 'ambos';

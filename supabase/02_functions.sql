@@ -44,6 +44,19 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Sessão e permissões
 -- -----------------------------------------------------------------------------
+-- Empresas ativas a que o usuário tem acesso: todas para o administrador; para os demais,
+-- as vinculadas no cadastro do usuário mais a empresa do colaborador dele.
+create or replace function fn_empresas_do_usuario(p_usuario uuid)
+returns setof uuid language sql stable set search_path = public as $$
+  select e.id
+    from empresas e
+   where e.ativo
+     and (exists (select 1 from usuarios u join perfis p on p.id = u.perfil_id where u.id = p_usuario and p.is_admin)
+          or e.id in (select ue.empresa_id from usuario_empresas ue where ue.usuario_id = p_usuario)
+          or e.id in (select c.empresa_id from usuarios u join colaboradores c on c.id = u.colaborador_id
+                       where u.id = p_usuario));
+$$;
+
 create or replace function fn_usuario_payload(p_usuario uuid)
 returns jsonb language sql stable set search_path = public as $$
   select jsonb_build_object(
@@ -55,6 +68,13 @@ returns jsonb language sql stable set search_path = public as $$
     'trocar_senha', u.trocar_senha,
     'perfil', jsonb_build_object('id', p.id, 'nome', p.nome, 'is_admin', p.is_admin,
                                  'abrangencia', case when p.is_admin then 'todos' else p.abrangencia end),
+    -- Empresa da sessão e as empresas a que o usuário tem acesso
+    'empresa', (select jsonb_build_object('id', e.id, 'nome', coalesce(e.nome_fantasia, e.razao_social),
+                                          'razao_social', e.razao_social, 'cnpj', e.cnpj)
+                  from empresas e where e.id = fn_empresa_atual()),
+    'empresas', coalesce((select jsonb_agg(jsonb_build_object('id', e.id, 'nome', coalesce(e.nome_fantasia, e.razao_social))
+                                           order by coalesce(e.nome_fantasia, e.razao_social))
+                            from empresas e where e.id in (select fn_empresas_do_usuario(u.id))), '[]'::jsonb),
     'permissoes', coalesce((
       select jsonb_object_agg(pg.chave, jsonb_build_object(
                'visualizar', p.is_admin or coalesce(pp.pode_visualizar, false),
@@ -74,6 +94,7 @@ create or replace function fn_auth(p_token text, p_pagina text default null, p_e
 returns uuid language plpgsql volatile security definer set search_path = public, extensions as $$
 declare
   v_usuario uuid;
+  v_empresa uuid;
   v_admin   boolean;
   v_ok      boolean;
 begin
@@ -85,7 +106,7 @@ begin
      and s.expira_em > now()
      and u.id = s.usuario_id
      and u.status = 'ativo'
-  returning s.usuario_id into v_usuario;
+  returning s.usuario_id, s.empresa_id into v_usuario, v_empresa;
 
   if v_usuario is null then
     raise exception 'Sessão inválida ou expirada' using errcode = '28000';
@@ -109,23 +130,35 @@ begin
   end if;
 
   perform set_config('app.usuario_id', v_usuario::text, true);
+  perform set_config('app.empresa_id', coalesce(v_empresa::text, ''), true);
   return v_usuario;
 end $$;
 
 -- Colaborador visível para o usuário corrente (app.usuario_id, definido por fn_auth),
 -- conforme a abrangência do perfil: todos, equipe (ele e subordinados diretos) ou próprio.
+-- Com uma empresa na sessão, só os colaboradores dela (o próprio colaborador, sempre).
 create or replace function fn_visivel(p_colaborador uuid)
 returns boolean language sql stable set search_path = public as $$
   select coalesce((
     select case
+             when p_colaborador = u.colaborador_id then true
+             when fn_empresa_atual() is not null
+                  and not exists (select 1 from colaboradores c
+                                   where c.id = p_colaborador and c.empresa_id = fn_empresa_atual()) then false
              when p.is_admin or p.abrangencia = 'todos' then true
              when u.colaborador_id is null then false
-             when p_colaborador = u.colaborador_id then true
              when p.abrangencia = 'equipe' then
                exists (select 1 from colaboradores c where c.id = p_colaborador and c.gestor_id = u.colaborador_id)
              else false end
       from usuarios u join perfis p on p.id = u.perfil_id
      where u.id = nullif(current_setting('app.usuario_id', true), '')::uuid), false);
+$$;
+
+-- Filtro de colaborador das pesquisas: um (p_um) e/ou vários (p_varios). Vazio = todos.
+create or replace function fn_filtro_colaborador(p_id uuid, p_um uuid, p_varios uuid[])
+returns boolean language sql immutable as $$
+  select (p_um is null or p_id = p_um)
+     and (p_varios is null or cardinality(p_varios) = 0 or p_id = any(p_varios));
 $$;
 
 -- -----------------------------------------------------------------------------
@@ -173,10 +206,39 @@ begin
   return jsonb_build_object('ok', true, 'usuario_id', v_user.id);
 end $$;
 
-create or replace function api_login(p_login text, p_senha text, p_user_agent text default null)
+-- Empresa em que o usuário vai entrar: a informada (se ele tiver acesso) ou a única que ele tem.
+-- Com mais de uma e nenhuma informada, devolve a lista para a tela de login perguntar.
+create or replace function fn_escolher_empresa(p_usuario uuid, p_empresa uuid)
+returns jsonb language plpgsql stable set search_path = public as $$
+declare
+  v_qtd integer;
+begin
+  select count(*) into v_qtd from fn_empresas_do_usuario(p_usuario);
+  if v_qtd = 0 then
+    return jsonb_build_object('ok', false, 'erro', 'Seu usuário não está vinculado a nenhuma empresa ativa. Procure o administrador.');
+  end if;
+  if p_empresa is not null then
+    if p_empresa not in (select fn_empresas_do_usuario(p_usuario)) then
+      return jsonb_build_object('ok', false, 'erro', 'Você não tem acesso a esta empresa.');
+    end if;
+    return jsonb_build_object('ok', true, 'empresa_id', p_empresa);
+  end if;
+  if v_qtd = 1 then
+    return jsonb_build_object('ok', true, 'empresa_id', (select fn_empresas_do_usuario(p_usuario) limit 1));
+  end if;
+  return jsonb_build_object('ok', false, 'escolher_empresa', true,
+    'empresas', (select jsonb_agg(jsonb_build_object('id', e.id, 'nome', coalesce(e.nome_fantasia, e.razao_social),
+                                                     'cidade', e.cidade, 'uf', e.uf)
+                                  order by coalesce(e.nome_fantasia, e.razao_social))
+                   from empresas e where e.id in (select fn_empresas_do_usuario(p_usuario))));
+end $$;
+
+drop function if exists api_login(text, text, text);
+create or replace function api_login(p_login text, p_senha text, p_user_agent text default null, p_empresa uuid default null)
 returns jsonb language plpgsql volatile security definer set search_path = public, extensions as $$
 declare
   v_cred    jsonb;
+  v_emp     jsonb;
   v_usuario uuid;
   v_token   text;
   v_exp     timestamptz := now() + interval '12 hours';
@@ -189,14 +251,34 @@ begin
   end if;
   v_usuario := (v_cred ->> 'usuario_id')::uuid;
 
+  v_emp := fn_escolher_empresa(v_usuario, p_empresa);
+  if not (v_emp ->> 'ok')::boolean then
+    return v_emp;
+  end if;
+
   update usuarios set ultimo_acesso = now() where id = v_usuario;
 
   v_token := encode(extensions.gen_random_bytes(32), 'hex');
-  insert into sessoes (usuario_id, token_hash, expira_em, user_agent)
-  values (v_usuario, fn_hash_token(v_token), v_exp, left(p_user_agent, 300));
+  insert into sessoes (usuario_id, token_hash, expira_em, user_agent, empresa_id)
+  values (v_usuario, fn_hash_token(v_token), v_exp, left(p_user_agent, 300), (v_emp ->> 'empresa_id')::uuid);
+  perform set_config('app.empresa_id', v_emp ->> 'empresa_id', true);
 
   return jsonb_build_object('ok', true, 'token', v_token, 'expira_em', v_exp,
                             'usuario', fn_usuario_payload(v_usuario));
+end $$;
+
+-- Troca a empresa da sessão (seletor no topo da tela)
+create or replace function api_sessao_empresa(p_token text, p_empresa uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_usuario uuid := fn_auth(p_token);
+begin
+  if p_empresa is null or p_empresa not in (select fn_empresas_do_usuario(v_usuario)) then
+    raise exception 'Você não tem acesso a esta empresa.' using errcode = '42501';
+  end if;
+  update sessoes set empresa_id = p_empresa where token_hash = fn_hash_token(p_token);
+  perform set_config('app.empresa_id', p_empresa::text, true);
+  return fn_usuario_payload(v_usuario);
 end $$;
 
 create or replace function api_sessao(p_token text)
@@ -243,20 +325,63 @@ $$;
 -- Uma linha por colaborador/dia com jornada prevista, horas trabalhadas,
 -- atraso, saldo (já aplicada a tolerância diária) e ocorrência.
 -- Considera apenas colaboradores com ponto controlado, a partir da data de
--- início do controle, e usa a jornada vigente em cada dia (colaborador_jornadas).
+-- início do controle, e usa a situação vigente em cada dia (jornada e regra de cálculo).
 -- -----------------------------------------------------------------------------
 
--- Jornada válida para o colaborador em uma data
+-- Jornada válida para o colaborador em uma data (a da situação vigente naquele dia)
 create or replace function fn_jornada_vigente(p_colaborador uuid, p_data date)
 returns uuid language sql stable set search_path = public as $$
-  select coalesce(
-    (select cj.jornada_id
-       from colaborador_jornadas cj
-      where cj.colaborador_id = p_colaborador and cj.data_inicio <= p_data
-      order by cj.data_inicio desc
-      limit 1),
-    (select c.jornada_id from colaboradores c where c.id = p_colaborador));
+  select v.jornada_id
+    from (select s.jornada_id, 0 as ordem, s.data_inicio
+            from colaborador_situacoes s
+           where s.colaborador_id = p_colaborador and s.data_inicio <= p_data
+          union all
+          select c.jornada_id, 1, null from colaboradores c where c.id = p_colaborador) v
+   order by v.ordem, v.data_inicio desc
+   limit 1;
 $$;
+
+-- Regra de cálculo válida para o colaborador em uma data
+create or replace function fn_perfil_vigente(p_colaborador uuid, p_data date)
+returns uuid language sql stable set search_path = public as $$
+  select coalesce(
+    (select s.perfil_evento_id from colaborador_situacoes s
+      where s.colaborador_id = p_colaborador and s.data_inicio <= p_data
+      order by s.data_inicio desc limit 1),
+    (select c.perfil_evento_id from colaboradores c where c.id = p_colaborador));
+$$;
+
+-- Leva ao cadastro a situação vigente hoje (situação, cargo, departamento, jornada, regra e salário)
+-- e a data de desligamento (a última situação, se for "desligado")
+create or replace function fn_colaborador_situacao_aplicar(p_colaborador uuid)
+returns void language plpgsql volatile set search_path = public as $$
+declare
+  s colaborador_situacoes%rowtype;
+  v_ultima colaborador_situacoes%rowtype;
+  v_deslig date;
+begin
+  select * into s from colaborador_situacoes
+   where colaborador_id = p_colaborador and data_inicio <= fn_hoje()
+   order by data_inicio desc limit 1;
+  if not found then   -- admissão futura: vale a primeira
+    select * into s from colaborador_situacoes where colaborador_id = p_colaborador order by data_inicio limit 1;
+    if not found then return; end if;
+  end if;
+  select * into v_ultima from colaborador_situacoes
+   where colaborador_id = p_colaborador order by data_inicio desc limit 1;
+  v_deslig := case when v_ultima.situacao = 'desligado' then v_ultima.data_inicio end;
+
+  perform set_config('app.data_vigencia', s.data_inicio::text, true);
+  update colaboradores c set
+         situacao = s.situacao, cargo_id = s.cargo_id, departamento_id = s.departamento_id,
+         jornada_id = s.jornada_id, perfil_evento_id = coalesce(s.perfil_evento_id, c.perfil_evento_id),
+         salario = s.salario, data_desligamento = v_deslig
+   where c.id = p_colaborador
+     and (c.situacao, c.cargo_id, c.departamento_id, c.jornada_id, c.perfil_evento_id, c.salario, c.data_desligamento)
+         is distinct from
+         (s.situacao, s.cargo_id, s.departamento_id, s.jornada_id, coalesce(s.perfil_evento_id, c.perfil_evento_id),
+          s.salario, v_deslig);
+end $$;
 
 -- Primeiro dia em que o ponto do colaborador é apurado
 create or replace function fn_inicio_controle(c colaboradores)
@@ -522,21 +647,32 @@ returns table (
   saida_antecipada_bruta_min  integer,
   falta_bruta                 boolean,   -- dia previsto, encerrado e sem batidas (antes de qualquer abono)
   abono_justificativa_min     integer,   -- minutos abonados por justificativas (atraso, saída e falta)
-  falta_folha                 boolean    -- falta levada para a folha (não debitada do banco de horas)
+  falta_folha                 boolean,   -- falta levada para a folha (não debitada do banco de horas)
+  banco_min                   integer    -- o que vai para o banco: saldo, com o crédito multiplicado pelo percentual de HE
 )
 language sql stable set search_path = public as $$
 with cfg as (
   select fn_fuso() as tz, fn_hoje() as hoje
 ),
 dias as (
-  select c.id as colaborador_id, d::date as data, fn_jornada_vigente(c.id, d::date) as jornada_id,
-         c.perfil_evento_id as perfil_id
+  -- Jornada e regra de cálculo da situação vigente em cada dia
+  select c.id as colaborador_id, d::date as data,
+         case when s.data_inicio is not null then s.jornada_id else c.jornada_id end as jornada_id,
+         coalesce(s.perfil_evento_id, c.perfil_evento_id) as perfil_id
     from colaboradores c
    cross join generate_series(p_ini, p_fim, interval '1 day') d
+    left join lateral (
+      select x.data_inicio, x.jornada_id, x.perfil_evento_id, x.situacao
+        from colaborador_situacoes x
+       where x.colaborador_id = c.id and x.data_inicio <= d::date
+       order by x.data_inicio desc
+       limit 1) s on true
    where (p_colaborador is null or c.id = p_colaborador)
      and c.controla_ponto
      and fn_inicio_controle(c) <= d::date
      and (c.data_desligamento is null or c.data_desligamento >= d::date)
+     -- depois de um desligamento (e até uma readmissão) o dia não é apurado
+     and not coalesce(s.situacao = 'desligado' and s.data_inicio < d::date, false)
 ),
 base as (
   -- A escala do dia (tabela escalas) substitui o dia da jornada: 'trabalho' cria a previsão com os
@@ -563,8 +699,12 @@ base as (
          case when pe.tolerancia_modo = 'diaria' then pe.tolerancia_diaria_min else 0 end as tolerancia_diaria_min,
          pe.hora_noturna_reduzida,
          coalesce(pe.usa_banco_horas, false) as usa_bh,
+         coalesce(pe.bh_multiplicar, false) as bh_multiplicar,
          coalesce(ph.percentual, 50) as he_percentual,
          (f.id is not null and e.tipo is distinct from 'trabalho') as feriado,
+         -- Escalado para trabalhar no feriado: a previsão da escala vale (faltar é falta), mas todo o tempo
+         -- trabalhado é hora extra com o percentual de Feriado — pago em dobro (Súmula 146 do TST)
+         (f.id is not null and e.tipo = 'trabalho') as feriado_escalado,
          a.tipo as ausencia_tipo,
          coalesce(a.abona, false) as abona,
          coalesce(ap.minutos, 0) as abono_parcial,
@@ -581,7 +721,7 @@ base as (
     left join feriados f      on f.data = dd.data
     left join perfis_eventos pe on pe.id = dd.perfil_id
     left join perfil_evento_he ph on ph.perfil_id = dd.perfil_id
-                                 and ph.dia = case when f.id is not null and e.tipo is distinct from 'trabalho' then 7
+                                 and ph.dia = case when f.id is not null then 7
                                                    when coalesce(case when e.id is not null then e.tipo = 'folga'
                                                                       else jd.folga end, true) then 8
                                                    else extract(dow from dd.data)::int end
@@ -683,8 +823,7 @@ marc_pares as (
          (sum(extract(epoch from p.pausa) / 60))::int as pausa
     from pares_aj p
    cross join cfg
-    left join colaboradores co  on co.id = p.colaborador_id
-    left join perfis_eventos pe on pe.id = co.perfil_evento_id
+    left join perfis_eventos pe on pe.id = fn_perfil_vigente(p.colaborador_id, p.data_referencia)
    group by p.colaborador_id, p.data_referencia
 ),
 marc_inter as (
@@ -763,6 +902,7 @@ fin as (
          (r.previsto > 0 and r.qtd = 0 and not r.em_andamento and r.abonado < r.previsto) as e_falta,
          -- Turno incompleto (entrada sem saída ou vice-versa) não soma horas: o previsto dele vira débito
          case when r.em_andamento then 0
+              when r.feriado_escalado and r.qtd > 0 then r.trabalhado
               when abs(r.trabalhado + r.abonado - r.previsto) <= coalesce(r.tolerancia_diaria_min, 0) then 0
               else r.trabalhado + r.abonado - r.previsto end as saldo
     from res r
@@ -811,7 +951,10 @@ select f.colaborador_id,
        f.antecipada_bruta,
        f.falta_bruta,
        f.abono_atraso + f.abono_antecipada + f.abono_falta,
-       f.falta_folha_marcada and f.e_falta
+       f.falta_folha_marcada and f.e_falta,
+       case when not (f.usa_bh and not (f.falta_folha_marcada and f.e_falta)) then 0
+            when f.saldo > 0 and f.bh_multiplicar then round(f.saldo * (1 + coalesce(f.he_percentual, 0) / 100.0))::int
+            else f.saldo end
   from fin f;
 $$;
 
@@ -829,6 +972,12 @@ returns integer language sql immutable as $$
 $$;
 
 drop function if exists fn_processar_banco_horas(date, date);
+-- 125 → "2h05"
+create or replace function fn_minutos_texto(p_min integer)
+returns text language sql immutable as $$
+  select (abs(p_min) / 60)::text || 'h' || lpad((abs(p_min) % 60)::text, 2, '0');
+$$;
+
 create or replace function fn_processar_banco_horas(p_ini date, p_fim date, p_colaborador uuid default null)
 returns integer language plpgsql volatile set search_path = public as $$
 declare
@@ -848,14 +997,16 @@ begin
 
   insert into banco_horas (colaborador_id, data, tipo, origem, minutos, descricao, usuario_id)
   select a.colaborador_id, a.data,
-         case when a.saldo_min > 0 then 'credito' else 'debito' end::tipo_lancamento_bh,
-         'automatico', a.saldo_min,
+         case when a.banco_min > 0 then 'credito' else 'debito' end::tipo_lancamento_bh,
+         'automatico', a.banco_min,
          case when a.falta then 'Falta não justificada'
-              when a.saldo_min > 0 then 'Horas excedentes'
+              when a.banco_min > a.saldo_min then
+                'Horas excedentes (' || fn_minutos_texto(a.saldo_min) || ' + ' || case when a.he_percentual = trunc(a.he_percentual) then trunc(a.he_percentual)::text else replace(rtrim(a.he_percentual::text, '0'), '.', ',') end || '%)'
+              when a.banco_min > 0 then 'Horas excedentes'
               else 'Horas não trabalhadas' end,
          nullif(current_setting('app.usuario_id', true), '')::uuid
     from fn_apuracao(p_ini, v_fim, p_colaborador) a
-   where a.saldo_min <> 0 and a.banco_horas and not a.fechado;
+   where a.banco_min <> 0 and a.banco_horas and not a.fechado;
 
   get diagnostics v_qtd = row_count;
   return v_qtd;
@@ -874,6 +1025,10 @@ begin
     select min(fn_inicio_controle(c)) - 1 into v_ate from colaboradores c;
   end if;
   if v_ate is null or v_ate < v_ontem then
+    -- Situações que passaram a valer desde a última execução vão para o cadastro
+    perform fn_colaborador_situacao_aplicar(x.colaborador_id)
+       from (select distinct s.colaborador_id from colaborador_situacoes s
+              where s.data_inicio > coalesce(v_ate, '-infinity'::date) and s.data_inicio <= fn_hoje()) x;
     if v_ate is not null then
       perform fn_processar_banco_horas(v_ate + 1, v_ontem);
     end if;
@@ -1233,7 +1388,8 @@ begin
 end $$;
 
 grant execute on function api_ping()                                   to anon, authenticated;
-grant execute on function api_login(text, text, text)                  to anon, authenticated;
+grant execute on function api_login(text, text, text, uuid)            to anon, authenticated;
+grant execute on function api_sessao_empresa(text, uuid)               to anon, authenticated;
 grant execute on function api_sessao(text)                             to anon, authenticated;
 grant execute on function api_logout(text)                             to anon, authenticated;
 grant execute on function api_alterar_senha(text, text, text)          to anon, authenticated;

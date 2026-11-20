@@ -28,7 +28,8 @@ delete from cargos g
 delete from jornadas j
  where j.nome in ('Administrativa 44h', 'Comercial 40h')
    and not exists (select 1 from colaboradores c where c.jornada_id = j.id)
-   and not exists (select 1 from colaborador_jornadas cj where cj.jornada_id = j.id);
+   and not exists (select 1 from colaborador_jornadas cj where cj.jornada_id = j.id)
+   and not exists (select 1 from colaborador_situacoes s where s.jornada_id = j.id);
 
 select
   (select count(*) from colaboradores) as colaboradores,

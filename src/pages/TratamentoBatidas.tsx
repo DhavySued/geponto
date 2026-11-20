@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BatidaChip, LegendaBatidas, STATUS_BATIDA } from '@/components/tratamento/BatidaChip';
 import { useAcoesBatida } from '@/components/tratamento/useAcoesBatida';
 import { Button } from '@/components/ui/Button';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
+import { paramColaboradores } from '@/lib/hooks';
 import { ContextMenu } from '@/components/ui/ContextMenu';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { formatData, toISODate } from '@/lib/format';
 import { ORIGEM_BATIDA, rotuloMarcacao } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { BatidaTratamento, StatusBatida, TratamentoAux } from '@/lib/types';
 
 type FiltroStatus = 'todas' | StatusBatida;
@@ -28,7 +30,7 @@ function diasAtras(n: number) {
 
 export default function TratamentoBatidas() {
   const [aux, setAux] = useState<TratamentoAux | null>(null);
-  const [filtros, setFiltros] = useState({ ini: diasAtras(6), fim: toISODate(new Date()), colaborador: '', departamento: '', status: 'todas' as FiltroStatus });
+  const [filtros, setFiltros] = useState({ ini: diasAtras(6), fim: toISODate(new Date()), colaboradores: [] as string[], departamento: '', status: 'todas' as FiltroStatus });
   const [lista, setLista] = useState<BatidaTratamento[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -50,7 +52,7 @@ export default function TratamentoBatidas() {
       const r = await api<BatidaTratamento[]>('api_tratamento_batidas', {
         p_ini: filtros.ini,
         p_fim: filtros.fim,
-        p_colaborador: filtros.colaborador || null,
+        p_colaboradores: paramColaboradores(filtros.colaboradores),
         p_departamento: filtros.departamento || null,
         p_status: filtros.status,
       });
@@ -67,7 +69,7 @@ export default function TratamentoBatidas() {
   }, [pesquisar]);
 
   const acoes = useAcoesBatida(aux, pesquisar);
-  const set = (k: keyof typeof filtros, v: string) => setFiltros((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof typeof filtros>(k: K, v: (typeof filtros)[K]) => setFiltros((f) => ({ ...f, [k]: v }));
   const colaboradores = aux?.colaboradores.filter((c) => !filtros.departamento || c.departamento_id === filtros.departamento) ?? [];
 
   return (
@@ -80,7 +82,7 @@ export default function TratamentoBatidas() {
           </p>
         </div>
         {aux?.pode_editar && (
-          <Button variant="accent" onClick={() => acoes.incluir(filtros.colaborador || null)}>
+          <Button variant="accent" onClick={() => acoes.incluir(filtros.colaboradores.length === 1 ? filtros.colaboradores[0] : null)}>
             <Plus className="h-4 w-4" /> Incluir batida
           </Button>
         )}
@@ -96,16 +98,14 @@ export default function TratamentoBatidas() {
             <input type="date" className="input" value={filtros.fim} min={filtros.ini} onChange={(e) => e.target.value && set('fim', e.target.value)} />
           </Field>
           <Field label="Lotação">
-            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaborador: '' }))}>
+            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaboradores: [] }))}>
               <option value="">Todas</option>
               {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
             </select>
           </Field>
           <Field label="Empregado">
-            <select className="input" value={filtros.colaborador} onChange={(e) => set('colaborador', e.target.value)}>
-              <option value="">Todos</option>
-              {colaboradores.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <ComboboxChips opcoes={colaboradores.map((c) => ({ id: c.id, nome: c.nome, detalhe: c.matricula }))}
+              valor={filtros.colaboradores} onChange={(v) => set('colaboradores', v)} rotuloTodos="Todos os empregados" />
           </Field>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">

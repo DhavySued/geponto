@@ -2,15 +2,16 @@ import clsx from 'clsx';
 import { AlertTriangle, Download, FileSpreadsheet, Save, Search, Settings2 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { baixarArquivo, gerarArquivoFolha, type FormatoHoras, type LayoutArquivo } from '@/lib/exportacao';
 import { formatData, formatMinutos } from '@/lib/format';
-import { competencia, useFiltrosAux } from '@/lib/hooks';
+import { competencia, useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { textoPercentual } from '@/lib/perfilEvento';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { EventoFolha, TotaisColaborador, TotaisPeriodo as TotaisPeriodoT } from '@/lib/types';
 
 const h = (min: number) => (min ? formatMinutos(min) : '—');
@@ -50,7 +51,7 @@ export default function TotaisPeriodo() {
   const toast = useToast();
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia(-1));
-  const [filtros, setFiltros] = useState({ colaborador: '', departamento: '' });
+  const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [dados, setDados] = useState<TotaisPeriodoT | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -67,7 +68,7 @@ export default function TotaisPeriodo() {
       const d = await api<TotaisPeriodoT>('api_totais_periodo', {
         p_ini: periodo.ini,
         p_fim: periodo.fim,
-        p_colaborador: filtros.colaborador || null,
+        p_colaboradores: paramColaboradores(filtros.colaboradores),
         p_departamento: filtros.departamento || null,
       });
       setDados(d);
@@ -155,18 +156,14 @@ export default function TotaisPeriodo() {
             <input type="date" className="input" value={periodo.fim} min={periodo.ini} onChange={(e) => e.target.value && setPeriodo((p) => ({ ...p, fim: e.target.value }))} />
           </Field>
           <Field label="Departamento">
-            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros({ departamento: e.target.value, colaborador: '' })}>
+            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros({ departamento: e.target.value, colaboradores: [] })}>
               <option value="">Todos</option>
               {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
             </select>
           </Field>
           <Field label="Colaborador">
-            <select className="input" value={filtros.colaborador} onChange={(e) => setFiltros((f) => ({ ...f, colaborador: e.target.value }))}>
-              <option value="">Todos</option>
-              {aux?.colaboradores
-                .filter((c) => !filtros.departamento || c.departamento_id === filtros.departamento)
-                .map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <ComboboxChips opcoes={opcoesColaboradores(aux?.colaboradores, filtros)} valor={filtros.colaboradores}
+              onChange={(v) => setFiltros((f) => ({ ...f, colaboradores: v }))} rotuloTodos="Todos os colaboradores" />
           </Field>
           <Button onClick={consultar} loading={carregando}>
             <Search className="h-4 w-4" /> Apurar

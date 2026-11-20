@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { formatData, numero, toISODate } from '@/lib/format';
 import { competencia } from '@/lib/hooks';
 import { ocorrencia } from '@/lib/ponto';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { Fechamento as FechamentoT, PreviaFechamento } from '@/lib/types';
 
 const dataCurta = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: 'numeric' });

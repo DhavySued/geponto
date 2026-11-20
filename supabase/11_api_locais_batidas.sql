@@ -71,9 +71,10 @@ end $$;
 -- Relatório: locais das batidas (registradas pelo sistema, com ou sem localização)
 --   p_local: local de ponto mais próximo · p_situacao: dentro, fora, registrada, sem_localizacao
 -- -----------------------------------------------------------------------------
+drop function if exists api_relatorio_locais_batidas(text, date, date, uuid, text, uuid, uuid);
 create or replace function api_relatorio_locais_batidas(
   p_token text, p_ini date, p_fim date, p_local uuid default null, p_situacao text default null,
-  p_colaborador uuid default null, p_departamento uuid default null)
+  p_colaborador uuid default null, p_departamento uuid default null, p_colaboradores uuid[] default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
   perform fn_auth(p_token, 'locais_batidas');
@@ -100,7 +101,7 @@ begin
              and b.geo_status is not null
              and (p_local is null or b.local_id = p_local)
              and (p_situacao is null or b.geo_status = p_situacao)
-             and (p_colaborador is null or c.id = p_colaborador)
+             and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
              and (p_departamento is null or c.departamento_id = p_departamento)
              and fn_visivel(c.id)
            limit 5000
@@ -109,6 +110,6 @@ end $$;
 
 grant execute on function api_enderecos_geo(text, jsonb)                                         to anon, authenticated;
 grant execute on function api_endereco_geo_salvar(text, jsonb)                                   to anon, authenticated;
-grant execute on function api_relatorio_locais_batidas(text, date, date, uuid, text, uuid, uuid) to anon, authenticated;
+grant execute on function api_relatorio_locais_batidas(text, date, date, uuid, text, uuid, uuid, uuid[]) to anon, authenticated;
 
 notify pgrst, 'reload schema';

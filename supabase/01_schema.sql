@@ -275,7 +275,8 @@ update colaborador_historico set data_vigencia = created_at::date where data_vig
 alter table colaborador_historico alter column data_vigencia set default current_date;
 alter table colaborador_historico alter column data_vigencia set not null;
 
--- Jornada vigente por período: a apuração de cada dia usa a jornada válida naquela data
+-- Jornada vigente por período (antiga: substituída pela Situação do Colaborador,
+-- fica só para trazer o histórico de quem já existia)
 create table if not exists colaborador_jornadas (
   colaborador_id  uuid not null references colaboradores(id) on delete cascade,
   data_inicio     date not null,
@@ -334,6 +335,68 @@ create table if not exists escalas (
   check ((saida_intervalo is null) = (retorno_intervalo is null))
 );
 create index if not exists ix_escalas_data on escalas (data);
+
+-- Escala lançada: o registro com nome, período (até 30 dias), dias da semana, horários e colaboradores.
+-- Gera os dias em `escalas` e fica guardada para consultar e alterar depois.
+create table if not exists escala_lancamentos (
+  id                 uuid primary key default gen_random_uuid(),
+  nome               text not null,
+  tipo               text not null check (tipo in ('trabalho', 'folga')),
+  data_inicio        date not null,
+  data_fim           date not null,
+  dias_semana        smallint[] not null default '{0,1,2,3,4,5,6}',
+  entrada            time,
+  saida_intervalo    time,
+  retorno_intervalo  time,
+  saida              time,
+  observacao         text,
+  colaboradores      uuid[] not null default '{}',
+  usuario_id         uuid references usuarios(id) on delete set null,   -- quem lançou
+  alterado_por       uuid references usuarios(id) on delete set null,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  check (data_fim >= data_inicio)
+);
+create index if not exists ix_escala_lancamentos_periodo on escala_lancamentos (data_inicio, data_fim);
+
+alter table escalas add column if not exists lancamento_id uuid references escala_lancamentos(id) on delete cascade;
+create index if not exists ix_escalas_lancamento on escalas (lancamento_id);
+
+-- Escalas lançadas antes do cadastro: cada lançamento antigo (mesma gravação, tipo e horários) vira um registro
+do $$
+declare
+  r record;
+  v_id uuid;
+begin
+  if not exists (select 1 from escalas where lancamento_id is null) then return; end if;
+  -- Só o vínculo muda: sem bloqueio de período fechado nem recálculo do banco
+  alter table escalas disable trigger user;
+  for r in
+    select e.usuario_id, e.created_at, e.tipo, e.entrada, e.saida_intervalo, e.retorno_intervalo, e.saida,
+           nullif(trim(e.observacao), '') as observacao,
+           min(e.data) as ini, max(e.data) as fim,
+           array_agg(distinct extract(dow from e.data)::smallint order by extract(dow from e.data)::smallint) as dias,
+           array_agg(distinct e.colaborador_id) as colabs
+      from escalas e
+     where e.lancamento_id is null
+     group by 1, 2, 3, 4, 5, 6, 7, 8
+  loop
+    insert into escala_lancamentos (nome, tipo, data_inicio, data_fim, dias_semana, entrada, saida_intervalo,
+                                    retorno_intervalo, saida, observacao, colaboradores, usuario_id, created_at, updated_at)
+    values (coalesce(left(r.observacao, 80), case r.tipo when 'trabalho' then 'Escala de trabalho' else 'Escala de folga' end)
+              || ' (' || to_char(r.ini, 'DD/MM') || case when r.fim > r.ini then ' a ' || to_char(r.fim, 'DD/MM') else '' end || ')',
+            r.tipo, r.ini, r.fim, r.dias, r.entrada, r.saida_intervalo, r.retorno_intervalo, r.saida, r.observacao,
+            r.colabs, r.usuario_id, r.created_at, r.created_at)
+    returning id into v_id;
+    update escalas e set lancamento_id = v_id
+     where e.lancamento_id is null
+       and e.usuario_id is not distinct from r.usuario_id and e.created_at = r.created_at and e.tipo = r.tipo
+       and e.entrada is not distinct from r.entrada and e.saida_intervalo is not distinct from r.saida_intervalo
+       and e.retorno_intervalo is not distinct from r.retorno_intervalo and e.saida is not distinct from r.saida
+       and nullif(trim(e.observacao), '') is not distinct from r.observacao;
+  end loop;
+  alter table escalas enable trigger user;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- Batidas (marcações de ponto)
@@ -555,10 +618,20 @@ begin
     insert into colaborador_historico (colaborador_id, tipo, descricao, dados_novos, usuario_id, data_vigencia)
     values (new.id, 'admissao', 'Colaborador admitido em ' || to_char(new.data_admissao, 'DD/MM/YYYY'),
             to_jsonb(new) - 'created_at' - 'updated_at', v_usuario, new.data_admissao);
-    if new.jornada_id is not null then
-      insert into colaborador_jornadas (colaborador_id, data_inicio, jornada_id, usuario_id)
-      values (new.id, new.data_admissao, new.jornada_id, v_usuario)
-      on conflict (colaborador_id, data_inicio) do update set jornada_id = excluded.jornada_id;
+    -- Primeira situação: a da admissão (e o desligamento, se o colaborador já entra desligado)
+    insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
+                                       jornada_id, perfil_evento_id, salario, motivo, usuario_id)
+    values (new.id, new.data_admissao,
+            case when new.situacao = 'desligado' and coalesce(new.data_desligamento, new.data_admissao) > new.data_admissao
+                 then 'ativo' else new.situacao end,
+            new.cargo_id, new.departamento_id, new.jornada_id, new.perfil_evento_id, new.salario, 'Admissão', v_usuario)
+    on conflict (colaborador_id, data_inicio) do nothing;
+    if new.situacao = 'desligado' and coalesce(new.data_desligamento, new.data_admissao) > new.data_admissao then
+      insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
+                                         jornada_id, perfil_evento_id, salario, motivo, usuario_id)
+      values (new.id, new.data_desligamento, 'desligado', new.cargo_id, new.departamento_id, new.jornada_id,
+              new.perfil_evento_id, new.salario, 'Desligamento', v_usuario)
+      on conflict (colaborador_id, data_inicio) do nothing;
     end if;
     return new;
   end if;
@@ -601,16 +674,6 @@ begin
             jsonb_build_object('jornada', (select nome from jornadas where id = old.jornada_id)),
             jsonb_build_object('jornada', (select nome from jornadas where id = new.jornada_id)), v_usuario, v_vigencia);
 
-    -- A nova jornada vale a partir da vigência; programações posteriores são substituídas
-    delete from colaborador_jornadas where colaborador_id = new.id and data_inicio > v_vigencia;
-    if new.jornada_id is null then
-      delete from colaborador_jornadas where colaborador_id = new.id and data_inicio = v_vigencia;
-    else
-      insert into colaborador_jornadas (colaborador_id, data_inicio, jornada_id, usuario_id)
-      values (new.id, v_vigencia, new.jornada_id, v_usuario)
-      on conflict (colaborador_id, data_inicio) do update
-        set jornada_id = excluded.jornada_id, usuario_id = excluded.usuario_id, created_at = now();
-    end if;
   end if;
 
   if to_jsonb(new) ? 'perfil_evento_id' and v_old -> 'perfil_evento_id' is distinct from v_new -> 'perfil_evento_id' then
@@ -770,6 +833,21 @@ alter table perfis_eventos add constraint perfis_eventos_tolerancia_modo_check
 alter table perfil_evento_he drop constraint if exists perfil_evento_he_dia_check;
 alter table perfil_evento_he add constraint perfil_evento_he_dia_check check (dia between 0 and 8);
 
+-- Banco de horas com o percentual de hora extra do dia: crédito = excedente × (1 + percentual).
+-- Ex.: feriado a 100% → 8h trabalhadas viram 16h no banco. Débitos continuam hora por hora.
+-- Vem ligado (também nas regras que já existiam): desligue na regra para voltar ao hora por hora.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'perfis_eventos' and column_name = 'bh_multiplicar') then
+    alter table perfis_eventos add column bh_multiplicar boolean not null default true;
+  end if;
+end $$;
+
+drop trigger if exists trg_escala_lancamentos_updated on escala_lancamentos;
+create trigger trg_escala_lancamentos_updated before update on escala_lancamentos
+  for each row execute function fn_set_updated_at();
+
 drop trigger if exists trg_escalas_updated on escalas;
 create trigger trg_escalas_updated before update on escalas
   for each row execute function fn_set_updated_at();
@@ -890,6 +968,69 @@ create trigger trg_colaboradores_perfil before insert or update of perfil_evento
 alter table colaboradores alter column perfil_evento_id set not null;
 
 -- -----------------------------------------------------------------------------
+-- Situação do Colaborador: o que vale a partir de cada data (situação, cargo, departamento,
+-- jornada, regra de cálculo e salário). A primeira é a da admissão. A apuração de cada dia
+-- usa a situação vigente naquele dia; o cadastro (colaboradores) guarda a vigente hoje.
+-- Situação "desligado": a data é a do desligamento (último dia apurado).
+-- -----------------------------------------------------------------------------
+create table if not exists colaborador_situacoes (
+  id                uuid primary key default gen_random_uuid(),
+  colaborador_id    uuid not null references colaboradores(id) on delete cascade,
+  data_inicio       date not null,
+  situacao          situacao_colaborador not null default 'ativo',
+  cargo_id          uuid references cargos(id) on delete set null,
+  departamento_id   uuid references departamentos(id) on delete set null,
+  jornada_id        uuid references jornadas(id),
+  perfil_evento_id  uuid references perfis_eventos(id),
+  salario           numeric(12,2),
+  motivo            text,
+  usuario_id        uuid references usuarios(id) on delete set null,
+  alterado_por      uuid references usuarios(id) on delete set null,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now(),
+  unique (colaborador_id, data_inicio)
+);
+create index if not exists ix_situacoes_jornada on colaborador_situacoes (jornada_id);
+
+drop trigger if exists trg_colaborador_situacoes_updated on colaborador_situacoes;
+create trigger trg_colaborador_situacoes_updated before update on colaborador_situacoes
+  for each row execute function fn_set_updated_at();
+alter table colaborador_situacoes enable row level security;
+revoke all on colaborador_situacoes from anon, authenticated;
+
+-- Colaboradores que já existiam: uma situação na admissão e uma a cada troca de jornada já
+-- registrada; a situação atual (desligado, férias, afastado) entra na data em que passou a valer.
+insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
+                                   jornada_id, perfil_evento_id, salario, motivo)
+select c.id, x.d, 'ativo', c.cargo_id, c.departamento_id,
+       coalesce((select cj.jornada_id from colaborador_jornadas cj
+                  where cj.colaborador_id = c.id and cj.data_inicio <= x.d
+                  order by cj.data_inicio desc limit 1), c.jornada_id),
+       c.perfil_evento_id, c.salario,
+       case when x.d = c.data_admissao then 'Admissão' else 'Troca de jornada' end
+  from colaboradores c
+ cross join lateral (
+   select c.data_admissao as d
+   union
+   select cj.data_inicio from colaborador_jornadas cj
+    where cj.colaborador_id = c.id and cj.data_inicio > c.data_admissao) x
+ where not exists (select 1 from colaborador_situacoes s where s.colaborador_id = c.id);
+
+insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
+                                   jornada_id, perfil_evento_id, salario, motivo)
+select c.id, x.d, c.situacao, c.cargo_id, c.departamento_id, c.jornada_id, c.perfil_evento_id, c.salario,
+       case c.situacao when 'desligado' then 'Desligamento' when 'ferias' then 'Férias' else 'Afastamento' end
+  from colaboradores c
+ cross join lateral (
+   select greatest(c.data_admissao,
+            case when c.situacao = 'desligado' then coalesce(c.data_desligamento, c.data_admissao)
+                 else coalesce((select max(h.data_vigencia) from colaborador_historico h
+                                 where h.colaborador_id = c.id and h.tipo = 'situacao'), c.data_admissao) end) as d) x
+ where c.situacao <> 'ativo'
+   and not exists (select 1 from colaborador_situacoes s where s.colaborador_id = c.id and s.situacao <> 'ativo')
+on conflict (colaborador_id, data_inicio) do update set situacao = excluded.situacao, motivo = excluded.motivo;
+
+-- -----------------------------------------------------------------------------
 -- Justificativas de atraso, saída antecipada e falta (uma por colaborador, dia e tipo)
 --   abona = false → fica registrado o motivo, mas o atraso/saída/falta continua contando
 --   abona = true  → os minutos deixam de ser atraso/débito; minutos null abona tudo,
@@ -928,6 +1069,115 @@ create table if not exists faltas_folha (
 );
 
 -- -----------------------------------------------------------------------------
+-- Empresas (clientes): várias empresas no mesmo sistema. Cada colaborador pertence a uma
+-- empresa; o usuário entra numa das empresas a que tem acesso (escolhida no login) e vê só
+-- os colaboradores dela. O local de ponto (cerca virtual) fica no cadastro da empresa.
+-- A tabela "empresa" (linha única) segue como configurações gerais do sistema.
+-- -----------------------------------------------------------------------------
+create table if not exists empresas (
+  id                  uuid primary key default gen_random_uuid(),
+  razao_social        text not null,
+  nome_fantasia       text,
+  cnpj                text unique,
+  inscricao_estadual  text,
+  telefone            text,
+  email               text,
+  cep                 text,
+  logradouro          text,
+  numero              text,
+  complemento         text,
+  bairro              text,
+  cidade              text,
+  uf                  char(2),
+  ativo               boolean not null default true,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+drop trigger if exists trg_empresas_updated on empresas;
+create trigger trg_empresas_updated before update on empresas
+  for each row execute function fn_set_updated_at();
+
+-- Primeira empresa a partir dos dados gerais já cadastrados
+insert into empresas (razao_social, nome_fantasia, cnpj, logradouro)
+select razao_social, nome_fantasia, nullif(trim(cnpj), ''), endereco from empresa
+ where id = 1 and not exists (select 1 from empresas);
+
+-- Empresa padrão: a mais antiga ativa (usada quando nada for informado)
+create or replace function fn_empresa_padrao()
+returns uuid language sql stable set search_path = public as $$
+  select id from empresas order by ativo desc, created_at, id limit 1;
+$$;
+
+-- Empresa da sessão (definida por fn_auth)
+create or replace function fn_empresa_atual()
+returns uuid language sql stable set search_path = public as $$
+  select nullif(current_setting('app.empresa_id', true), '')::uuid;
+$$;
+
+-- Dados da empresa para cabeçalhos (espelho de ponto, relatórios)
+create or replace function fn_empresa_json(p_empresa uuid)
+returns jsonb language sql stable set search_path = public as $$
+  select jsonb_build_object(
+           'id', e.id, 'razao_social', e.razao_social, 'nome_fantasia', e.nome_fantasia, 'cnpj', e.cnpj,
+           'endereco', nullif(concat_ws(' – ',
+                         nullif(concat_ws(', ', e.logradouro, e.numero, e.complemento), ''),
+                         nullif(concat_ws(', ', e.bairro, nullif(concat_ws('/', e.cidade, e.uf), '')), ''),
+                         case when e.cep is not null then 'CEP ' || e.cep end), ''))
+    from empresas e
+   where e.id = coalesce(p_empresa, fn_empresa_atual(), fn_empresa_padrao());
+$$;
+
+alter table colaboradores add column if not exists empresa_id uuid references empresas(id);
+update colaboradores set empresa_id = fn_empresa_padrao() where empresa_id is null;
+create index if not exists ix_colaboradores_empresa on colaboradores (empresa_id);
+
+-- Colaborador sem empresa informada entra na empresa da sessão (ou na padrão)
+create or replace function fn_colaborador_empresa()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  new.empresa_id := coalesce(new.empresa_id, fn_empresa_atual(), fn_empresa_padrao());
+  return new;
+end $$;
+drop trigger if exists trg_colaboradores_empresa on colaboradores;
+create trigger trg_colaboradores_empresa before insert or update of empresa_id on colaboradores
+  for each row execute function fn_colaborador_empresa();
+
+-- Empresas a que o usuário tem acesso (além da empresa do próprio colaborador)
+create table if not exists usuario_empresas (
+  usuario_id  uuid not null references usuarios(id) on delete cascade,
+  empresa_id  uuid not null references empresas(id) on delete cascade,
+  primary key (usuario_id, empresa_id)
+);
+-- Na primeira vez, todos os usuários existentes ficam com a empresa padrão
+insert into usuario_empresas (usuario_id, empresa_id)
+select u.id, fn_empresa_padrao() from usuarios u
+ where fn_empresa_padrao() is not null and not exists (select 1 from usuario_empresas);
+
+alter table sessoes add column if not exists empresa_id uuid references empresas(id) on delete set null;
+
+-- Local de ponto da empresa (um por empresa)
+alter table locais_ponto add column if not exists empresa_id uuid references empresas(id) on delete cascade;
+create unique index if not exists ux_locais_ponto_empresa on locais_ponto (empresa_id) where empresa_id is not null;
+update locais_ponto set empresa_id = fn_empresa_padrao()
+ where id = (select id from locais_ponto order by ativo desc, created_at limit 1)
+   and empresa_id is null
+   and not exists (select 1 from locais_ponto where empresa_id is not null);
+
+-- Configurações do registro de ponto (cerca virtual)
+--   usar_limitacoes_ponto: compara a localização da batida com o local da empresa
+--   bloquear_fora_cerca:   com limitações, impede a batida fora da cerca (ou sem localização);
+--                          sem bloquear, registra e sinaliza para o RH conferir
+do $$ begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'empresa' and column_name = 'usar_limitacoes_ponto') then
+    alter table empresa add column usar_limitacoes_ponto boolean not null default false;
+    -- Quem já tinha local de ponto cadastrado continua com a cerca (como antes: registra e sinaliza)
+    update empresa set usar_limitacoes_ponto = exists (select 1 from locais_ponto where ativo);
+  end if;
+end $$;
+alter table empresa add column if not exists bloquear_fora_cerca boolean not null default false;
+
+-- -----------------------------------------------------------------------------
 -- Row Level Security
 -- RLS ligado em TODAS as tabelas e nenhuma policy para anon/authenticated:
 -- a chave pública não lê nem grava tabelas diretamente. Todo acesso passa
@@ -959,8 +1209,11 @@ alter table eventos_folha         enable row level security;
 alter table perfis_eventos        enable row level security;
 alter table perfil_evento_he      enable row level security;
 alter table escalas               enable row level security;
+alter table escala_lancamentos    enable row level security;
 alter table justificativas        enable row level security;
 alter table faltas_folha          enable row level security;
+alter table empresas              enable row level security;
+alter table usuario_empresas      enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;

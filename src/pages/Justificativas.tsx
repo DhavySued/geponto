@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { AlertTriangle, CheckCircle2, Lock, MessageSquareText, Pencil, Search, Trash2, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AlertaErro, Field } from '@/components/ui/Field';
@@ -9,8 +10,8 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatData, formatMinutos, horasParaMinutos } from '@/lib/format';
-import { competencia, useFiltrosAux } from '@/lib/hooks';
-import { api } from '@/lib/supabase';
+import { competencia, useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
+import { api } from '@/lib/api';
 import type { JustificativaItem, JustificativasLista, TipoJustificativa } from '@/lib/types';
 
 const TIPOS: Record<TipoJustificativa, { label: string; tone: BadgeTone }> = {
@@ -206,8 +207,8 @@ export default function Justificativas() {
   const podeEditar = pode('justificativas', 'editar');
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia());
-  const [filtros, setFiltros] = useState<{ colaborador: string; departamento: string; situacao: Situacao; tipo: string }>({
-    colaborador: '', departamento: '', situacao: 'pendentes', tipo: '',
+  const [filtros, setFiltros] = useState<{ colaboradores: string[]; departamento: string; situacao: Situacao; tipo: string }>({
+    colaboradores: [], departamento: '', situacao: 'pendentes', tipo: '',
   });
   const [dados, setDados] = useState<JustificativasLista | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -224,7 +225,7 @@ export default function Justificativas() {
         await api<JustificativasLista>('api_justificativas_listar', {
           p_ini: periodo.ini,
           p_fim: periodo.fim,
-          p_colaborador: filtros.colaborador || null,
+          p_colaboradores: paramColaboradores(filtros.colaboradores),
           p_departamento: filtros.departamento || null,
           p_situacao: filtros.situacao || null,
         }),
@@ -316,18 +317,14 @@ export default function Justificativas() {
             </select>
           </Field>
           <Field label="Departamento">
-            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaborador: '' }))}>
+            <select className="input" value={filtros.departamento} onChange={(e) => setFiltros((f) => ({ ...f, departamento: e.target.value, colaboradores: [] }))}>
               <option value="">Todos</option>
               {aux?.departamentos.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
             </select>
           </Field>
           <Field label="Colaborador">
-            <select className="input" value={filtros.colaborador} onChange={(e) => setFiltros((f) => ({ ...f, colaborador: e.target.value }))}>
-              <option value="">Todos</option>
-              {aux?.colaboradores
-                .filter((c) => !filtros.departamento || c.departamento_id === filtros.departamento)
-                .map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <ComboboxChips opcoes={opcoesColaboradores(aux?.colaboradores, filtros)} valor={filtros.colaboradores}
+              onChange={(v) => setFiltros((f) => ({ ...f, colaboradores: v }))} rotuloTodos="Todos os colaboradores" />
           </Field>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">

@@ -3,8 +3,9 @@ import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { ABRANGENCIAS, STATUS_USUARIO } from '@/lib/acesso';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { StatusUsuario, UsuarioSistema, UsuariosDados } from '@/lib/types';
 
 interface Form {
@@ -16,6 +17,8 @@ interface Form {
   status: StatusUsuario;
   senha: string;
   trocar_senha: boolean;
+  /** Empresas que o usuário pode acessar (escolhidas no login) */
+  empresas: string[];
 }
 
 export function UsuarioModal({
@@ -32,6 +35,7 @@ export function UsuarioModal({
   onSalvo: () => void;
 }) {
   const toast = useToast();
+  const { usuario: eu } = useAuth();
   const [form, setForm] = useState<Form | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -52,6 +56,7 @@ export function UsuarioModal({
             status: usuario.status,
             senha: '',
             trocar_senha: true,
+            empresas: usuario.empresas ?? [],
           }
         : {
             nome: '',
@@ -62,9 +67,10 @@ export function UsuarioModal({
             status: 'ativo',
             senha: '',
             trocar_senha: true,
+            empresas: eu?.empresa ? [eu.empresa.id] : [],
           },
     );
-  }, [aberto, usuario, dados]);
+  }, [aberto, usuario, dados, eu]);
 
   // Colaboradores livres + o já vinculado a este usuário
   const colaboradores = useMemo(
@@ -75,6 +81,8 @@ export function UsuarioModal({
   if (!form) return null;
   const perfil = dados.perfis.find((p) => p.id === form.perfil_id);
   const exigeColaborador = !!perfil && !perfil.is_admin && perfil.abrangencia !== 'todos';
+  const marcarEmpresa = (id: string, v: boolean) =>
+    setForm({ ...form, empresas: v ? [...form.empresas, id] : form.empresas.filter((x) => x !== id) });
 
   const escolherColaborador = (id: string) => {
     const c = dados.colaboradores.find((x) => x.id === id);
@@ -170,6 +178,32 @@ export function UsuarioModal({
           <input type="text" className="input" value={form.senha} autoComplete="new-password"
             onChange={(e) => setForm({ ...form, senha: e.target.value })} />
         </Field>
+        <div className="sm:col-span-2">
+          <p className="label">Empresas que pode acessar{!perfil?.is_admin && !form.colaborador_id && <span className="text-rose-500"> *</span>}</p>
+          {perfil?.is_admin ? (
+            <p className="text-xs text-slate-500">Perfil administrador: acessa todas as empresas.</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {dados.empresas.filter((e) => e.ativo || form.empresas.includes(e.id)).map((e) => {
+                  const marcada = form.empresas.includes(e.id);
+                  return (
+                    <label key={e.id}
+                      className={`flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm ring-1 transition ${marcada ? 'bg-primary-50 text-primary-800 ring-primary-300' : 'text-slate-600 ring-slate-200 hover:bg-slate-50'}`}>
+                      <input type="checkbox" className="accent-primary-700" checked={marcada} onChange={(ev) => marcarEmpresa(e.id, ev.target.checked)} />
+                      {e.nome}{!e.ativo && ' (inativa)'}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-xs text-slate-500">
+                Com mais de uma, o usuário escolhe a empresa na tela de login (para entrar e para bater o ponto).
+                {form.colaborador_id && ' A empresa do colaborador vinculado já tem acesso automático.'}
+                {usuario?.empresa_colaborador && form.colaborador_id === usuario.colaborador_id && ` (${usuario.empresa_colaborador})`}
+              </p>
+            </>
+          )}
+        </div>
         <div className="flex items-end">
           {(form.senha || !usuario) && (
             <Switch

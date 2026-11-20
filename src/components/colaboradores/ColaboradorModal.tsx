@@ -1,21 +1,22 @@
 import clsx from 'clsx';
-import { CalendarClock, History, KeyRound, Loader2, Plus } from 'lucide-react';
+import { ArrowRight, CalendarClock, History, KeyRound, Loader2, Plus } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { SITUACAO } from '@/components/ui/Badge';
+import { Badge, SITUACAO } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { formatData, toISODate } from '@/lib/format';
 import { mascaraCEP, mascaraCPF, mascaraPIS, mascaraTelefone } from '@/lib/mask';
-import { api } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type {
   AcessoColaborador,
   CadastrosAuxiliares,
   Colaborador,
+  ColaboradorSituacao,
   HistoricoItem,
-  JornadaVigencia,
   Opcao,
   SituacaoColaborador,
 } from '@/lib/types';
@@ -24,17 +25,14 @@ const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO R
 
 type Aba = 'pessoais' | 'profissional' | 'endereco' | 'acesso' | 'historico';
 
-// Alterações que valem a partir de uma data (vigência) e entram no histórico
-const CAMPOS_COM_VIGENCIA = ['jornada_id', 'cargo_id', 'departamento_id', 'situacao'] as const;
-
 function vazio(): Colaborador {
   return {
     matricula: '', nome: '', nome_social: '', cpf: '', pis: '', rg: '', data_nascimento: '', sexo: '',
     email: '', telefone: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '',
-    cargo_id: '', departamento_id: '', jornada_id: '', perfil_evento_id: '', gestor_id: '',
+    empresa_id: '', cargo_id: '', departamento_id: '', jornada_id: '', perfil_evento_id: '', gestor_id: '',
     data_admissao: '', data_desligamento: '', situacao: 'ativo', salario: '', observacoes: '',
     // Novo colaborador: controle começa hoje, para não gerar faltas desde uma admissão antiga
-    controla_ponto: true, controle_ponto_inicio: toISODate(new Date()), data_vigencia: toISODate(new Date()),
+    controla_ponto: true, controle_ponto_inicio: toISODate(new Date()),
   };
 }
 
@@ -45,10 +43,9 @@ function doBanco(r: Record<string, unknown>): Colaborador {
   for (const k of Object.keys(base)) out[k] = r[k] == null ? '' : String(r[k]);
   out.id = r.id;
   out.historico = r.historico;
-  out.jornadas_vigencias = r.jornadas_vigencias;
+  out.situacoes = r.situacoes;
   out.acesso = r.acesso;
   out.controla_ponto = r.controla_ponto !== false;
-  out.data_vigencia = toISODate(new Date());
   out.cpf = mascaraCPF(String(out.cpf));
   out.pis = mascaraPIS(String(out.pis));
   out.telefone = mascaraTelefone(String(out.telefone));
@@ -159,20 +156,33 @@ function Historico({ itens }: { itens: HistoricoItem[] }) {
   );
 }
 
-function VigenciasJornada({ itens }: { itens: JornadaVigencia[] }) {
-  if (itens.length === 0) return null;
-  const dt = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: 'numeric' });
+/** Situações do colaborador (somente leitura): mudam só na Situação do Colaborador, a partir de uma data */
+function Situacoes({ colaboradorId, itens, onFechar }: { colaboradorId: string; itens: ColaboradorSituacao[]; onFechar: () => void }) {
+  const dt = (d: string) => formatData(d, { day: '2-digit', month: '2-digit', year: 'numeric' });
   return (
-    <div className="rounded-xl bg-slate-50 p-3 sm:col-span-2">
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-600">
-        <CalendarClock className="h-3.5 w-3.5" /> Jornadas por período
-      </p>
-      <ul className="space-y-1 text-xs">
+    <div className="rounded-xl p-3 ring-1 ring-slate-200/80 sm:col-span-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+          <CalendarClock className="h-3.5 w-3.5" /> Situação, cargo, departamento, jornada, regra de cálculo e salário
+        </p>
+        <Link
+          to={`/cadastros/colaboradores/situacoes?colaborador=${colaboradorId}`}
+          onClick={onFechar}
+          className="flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-800"
+        >
+          Alterar na Situação do Colaborador <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <ul className="divide-y divide-slate-100 text-xs">
         {itens.map((v) => (
-          <li key={v.data_inicio} className="flex justify-between gap-3">
-            <span className="font-medium text-slate-700">{v.jornada}</span>
+          <li key={v.id} className={clsx('flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2', v.vigente && 'font-medium')}>
+            <span className="flex flex-wrap items-center gap-2 text-slate-700">
+              <Badge tone={SITUACAO[v.situacao].tone}>{SITUACAO[v.situacao].label}</Badge>
+              {[v.cargo, v.departamento, v.jornada, v.perfil_evento].filter(Boolean).join(' · ') || '—'}
+              {v.vigente && <span className="rounded-md bg-primary-50 px-1.5 py-0.5 text-[11px] text-primary-700">vigente</span>}
+            </span>
             <span className="tabular-nums text-slate-500">
-              {dt(v.data_inicio)} → {v.data_fim ? dt(v.data_fim) : 'atual'}
+              {dt(v.data_inicio)} → {v.data_fim ? dt(v.data_fim) : 'em diante'}
             </span>
           </li>
         ))}
@@ -283,13 +293,13 @@ export function ColaboradorModal({
   onSalvo: () => void;
 }) {
   const toast = useToast();
+  const { usuario: usuarioLogado } = useAuth();
   const [aba, setAba] = useState<Aba>('pessoais');
   const [form, setForm] = useState<Colaborador>(vazio);
   const [aux, setAux] = useState<CadastrosAuxiliares | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [original, setOriginal] = useState<Colaborador | null>(null);
   const [tentouSalvar, setTentouSalvar] = useState(false);
 
   useEffect(() => {
@@ -306,7 +316,6 @@ export function ColaboradorModal({
         setAux(a);
         const f = c ? doBanco(c) : vazio();
         setForm(f);
-        setOriginal(c ? f : null);
       })
       .catch((e) => setErro(e instanceof Error ? e.message : 'Erro ao carregar.'))
       .finally(() => setCarregando(false));
@@ -321,7 +330,6 @@ export function ColaboradorModal({
     setForm((f) => ({ ...f, acesso: c.acesso as AcessoColaborador | null }));
   };
 
-  const alterouComVigencia = !!original && CAMPOS_COM_VIGENCIA.some((k) => form[k] !== original[k]);
   const perfisEventos = aux?.perfis_eventos ?? [];
   const admissaoInvalida = tentouSalvar && !form.data_admissao;
 
@@ -357,16 +365,11 @@ export function ColaboradorModal({
       setErro('O controle de ponto não pode começar antes da admissão.');
       return;
     }
-    if (alterouComVigencia && (!form.data_vigencia || form.data_vigencia < form.data_admissao)) {
-      setAba('profissional');
-      setErro('Informe uma data de vigência igual ou posterior à admissão.');
-      return;
-    }
     setSalvando(true);
     try {
       const dados: Partial<Colaborador> = { ...form };
       delete dados.historico;
-      delete dados.jornadas_vigencias;
+      delete dados.situacoes;
       delete dados.acesso;
       // "1.234,56" e "2.500" → formato brasileiro; "2500.00" (vindo do banco) segue como está
       const salario = form.salario.includes(',')
@@ -500,11 +503,13 @@ export function ColaboradorModal({
                 />
                 {admissaoInvalida && <span className="mt-1 block text-[11px] font-medium text-rose-600">Campo obrigatório</span>}
               </Field>
-              <Field label="Situação">
-                <select className="input" value={form.situacao} onChange={(e) => set('situacao', e.target.value as SituacaoColaborador)}>
-                  {(Object.keys(SITUACAO) as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
-                </select>
-              </Field>
+              {!form.id && (
+                <Field label="Situação">
+                  <select className="input" value={form.situacao} onChange={(e) => set('situacao', e.target.value as SituacaoColaborador)}>
+                    {(Object.keys(SITUACAO) as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
+                  </select>
+                </Field>
+              )}
 
               {/* Controle de ponto */}
               <div className="rounded-xl p-3 ring-1 ring-slate-200/80 sm:col-span-2">
@@ -529,44 +534,61 @@ export function ColaboradorModal({
                 </div>
               </div>
 
-              <SelectComCriacao label="Cargo" valor={form.cargo_id} opcoes={aux.cargos}
-                onChange={(v) => set('cargo_id', v)} onCriar={criarAuxiliar('cargos', 'cargo_id')} />
-              <SelectComCriacao label="Departamento" valor={form.departamento_id} opcoes={aux.departamentos}
-                onChange={(v) => set('departamento_id', v)} onCriar={criarAuxiliar('departamentos', 'departamento_id')} />
-              <Field
-                label="Jornada de trabalho"
-                dica={aux.jornadas.length === 0 && (
-                  <>Nenhuma jornada ativa. <Link to="/cadastros/jornadas" className="font-medium text-primary-600 underline" onClick={onFechar}>Cadastre uma jornada</Link>.</>
+              {(usuarioLogado?.empresas.length ?? 0) > 1 && (
+                <Field label="Empresa" obrigatorio dica="O colaborador aparece só quando o usuário entra nesta empresa.">
+                  <select className="input" value={form.empresa_id || usuarioLogado?.empresa?.id || ''} onChange={(e) => set('empresa_id', e.target.value)}>
+                    {usuarioLogado?.empresas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                  </select>
+                </Field>
+              )}
+              {form.id ? (
+                <Situacoes colaboradorId={form.id} itens={form.situacoes ?? []} onFechar={onFechar} />
+              ) : (
+                <>
+                <p className="rounded-xl bg-primary-50/60 p-3 text-xs text-primary-900 sm:col-span-2">
+                  Situação, cargo, departamento, jornada, regra de cálculo e salário viram a <strong>primeira situação</strong>,
+                  na data da admissão. Depois, as mudanças são lançadas na Situação do Colaborador, a partir de uma data.
+                </p>
+                <SelectComCriacao label="Cargo" valor={form.cargo_id} opcoes={aux.cargos}
+                  onChange={(v) => set('cargo_id', v)} onCriar={criarAuxiliar('cargos', 'cargo_id')} />
+                <SelectComCriacao label="Departamento" valor={form.departamento_id} opcoes={aux.departamentos}
+                  onChange={(v) => set('departamento_id', v)} onCriar={criarAuxiliar('departamentos', 'departamento_id')} />
+                <Field
+                  label="Jornada de trabalho"
+                  dica={aux.jornadas.length === 0 && (
+                    <>Nenhuma jornada ativa. <Link to="/cadastros/jornadas" className="font-medium text-primary-600 underline" onClick={onFechar}>Cadastre uma jornada</Link>.</>
+                  )}
+                >
+                  <select className="input" value={form.jornada_id} onChange={(e) => set('jornada_id', e.target.value)}>
+                    <option value="">Selecione…</option>
+                    {aux.jornadas.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
+                  </select>
+                </Field>
+                <Field
+                  label="Regra de cálculo"
+                  dica="Tolerâncias, percentual de hora extra por dia, adicional noturno e banco de horas."
+                >
+                  <select className="input" value={form.perfil_evento_id} onChange={(e) => set('perfil_evento_id', e.target.value)}>
+                    {!form.perfil_evento_id && (
+                      <option value="">
+                        Regra padrão{perfisEventos.find((p) => p.padrao) ? ` (${perfisEventos.find((p) => p.padrao)!.nome})` : ''}
+                      </option>
+                    )}
+                    {perfisEventos.map((o) => <option key={o.id} value={o.id}>{o.nome}{o.padrao ? ' · padrão' : ''}</option>)}
+                  </select>
+                </Field>
+                <Field label="Salário (R$)">
+                  <input className="input tabular-nums" inputMode="decimal" value={form.salario}
+                    onChange={(e) => set('salario', e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" />
+                </Field>
+                {form.situacao === 'desligado' && (
+                  <Field label="Data de desligamento" dica="Se ficar em branco, será usada a data de hoje.">
+                    <input type="date" className="input" value={form.data_desligamento} min={form.data_admissao}
+                      onChange={(e) => set('data_desligamento', e.target.value)} />
+                  </Field>
                 )}
-              >
-                <select className="input" value={form.jornada_id} onChange={(e) => set('jornada_id', e.target.value)}>
-                  <option value="">Selecione…</option>
-                  {/* Jornada que foi desativada depois: continua aparecendo para quem já a usa */}
-                  {form.jornada_id && !aux.jornadas.some((o) => o.id === form.jornada_id) && (
-                    <option value={form.jornada_id}>
-                      {form.jornadas_vigencias?.find((v) => v.jornada_id === form.jornada_id)?.jornada ?? 'Jornada atual'} (inativa)
-                    </option>
-                  )}
-                  {aux.jornadas.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-                </select>
-              </Field>
-              <Field
-                label="Perfil de eventos"
-                dica="Tolerâncias, percentual de hora extra por dia, adicional noturno e banco de horas."
-              >
-                <select className="input" value={form.perfil_evento_id} onChange={(e) => set('perfil_evento_id', e.target.value)}>
-                  {!form.perfil_evento_id && (
-                    <option value="">
-                      Perfil padrão{perfisEventos.find((p) => p.padrao) ? ` (${perfisEventos.find((p) => p.padrao)!.nome})` : ''}
-                    </option>
-                  )}
-                  {/* Perfil desativado depois: continua aparecendo para quem já o usa */}
-                  {form.perfil_evento_id && !perfisEventos.some((o) => o.id === form.perfil_evento_id) && (
-                    <option value={form.perfil_evento_id}>Perfil atual (inativo)</option>
-                  )}
-                  {perfisEventos.map((o) => <option key={o.id} value={o.id}>{o.nome}{o.padrao ? ' · padrão' : ''}</option>)}
-                </select>
-              </Field>
+                </>
+              )}
               <Field label="Gestor imediato">
                 <select className="input" value={form.gestor_id} onChange={(e) => set('gestor_id', e.target.value)}>
                   <option value="">Nenhum</option>
@@ -574,37 +596,6 @@ export function ColaboradorModal({
                 </select>
               </Field>
 
-              {/* Vigência: só aparece quando jornada, cargo, departamento ou situação mudam */}
-              {alterouComVigencia && (
-                <div className="rounded-xl bg-accent-50 p-3 ring-1 ring-accent-200 sm:col-span-2">
-                  <div className="grid items-end gap-3 sm:grid-cols-[1fr_200px]">
-                    <p className="text-sm text-accent-900">
-                      <strong className="font-semibold">A partir de quando vale esta alteração?</strong>
-                      <span className="mt-0.5 block text-xs text-accent-800/80">
-                        {form.jornada_id !== original?.jornada_id
-                          ? 'A nova jornada é aplicada na apuração a partir desta data; os dias anteriores continuam com a jornada antiga.'
-                          : 'A data fica registrada no histórico do colaborador.'}
-                      </span>
-                    </p>
-                    <Field label="Vigência" obrigatorio>
-                      <input type="date" className="input" value={form.data_vigencia} min={form.data_admissao || undefined}
-                        onChange={(e) => set('data_vigencia', e.target.value)} />
-                    </Field>
-                  </div>
-                </div>
-              )}
-              <VigenciasJornada itens={form.jornadas_vigencias ?? []} />
-
-              {form.situacao === 'desligado' && (
-                <Field label="Data de desligamento" dica="Se ficar em branco, será usada a data de hoje.">
-                  <input type="date" className="input" value={form.data_desligamento} min={form.data_admissao}
-                    onChange={(e) => set('data_desligamento', e.target.value)} />
-                </Field>
-              )}
-              <Field label="Salário (R$)">
-                <input className="input tabular-nums" inputMode="decimal" value={form.salario}
-                  onChange={(e) => set('salario', e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" />
-              </Field>
               <Field label="Observações" className="sm:col-span-2">
                 <textarea className="input h-24 py-2" value={form.observacoes} onChange={(e) => set('observacoes', e.target.value)} />
               </Field>
@@ -660,7 +651,7 @@ export function ColaboradorModal({
 
       {form.id && aba !== 'historico' && aba !== 'acesso' && !carregando && (
         <p className="mt-5 text-[11px] text-slate-400">
-          Admitido em {form.data_admissao ? formatData(form.data_admissao, { dateStyle: 'long' }) : '—'}. Alterações ficam registradas no histórico.
+          Admitido em {form.data_admissao ? formatData(form.data_admissao, { dateStyle: 'long' }) : '—'}. Alterações ficam registradas no histórico; situação, cargo, jornada e regra mudam na Situação do Colaborador.
         </p>
       )}
     </Modal>

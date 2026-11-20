@@ -8,6 +8,7 @@ import type { PaginaChave } from '@/lib/types';
 import BancoHoras from '@/pages/BancoHoras';
 import ConversaoBancoHoras from '@/pages/ConversaoBancoHoras';
 import Colaboradores from '@/pages/Colaboradores';
+import SituacoesColaborador from '@/pages/SituacoesColaborador';
 import ConsultaBatidas from '@/pages/ConsultaBatidas';
 import Dashboard from '@/pages/Dashboard';
 import EmConstrucao from '@/pages/EmConstrucao';
@@ -16,7 +17,9 @@ import Fechamento from '@/pages/Fechamento';
 import Feriados from '@/pages/Feriados';
 import Jornadas from '@/pages/Jornadas';
 import Justificativas from '@/pages/Justificativas';
-import LocaisPonto from '@/pages/LocaisPonto';
+import Configuracoes from '@/pages/Configuracoes';
+import Integracoes from '@/pages/Integracoes';
+import Empresas from '@/pages/Empresas';
 import Login from '@/pages/Login';
 import MeuPonto from '@/pages/MeuPonto';
 import Ocorrencias from '@/pages/Ocorrencias';
@@ -56,6 +59,7 @@ function ComPermissao({ pagina, children }: { pagina: PaginaChave; children: Rea
 const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   dashboard: Dashboard,
   colaboradores: Colaboradores,
+  situacoes_colaborador: SituacoesColaborador,
   jornadas: Jornadas,
   perfis_eventos: PerfisEventos,
   escalas: Escalas,
@@ -65,7 +69,6 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   consulta_batidas: ConsultaBatidas,
   lancamento_manual: TratamentoBatidas,
   feriados: Feriados,
-  locais_ponto: LocaisPonto,
   ocorrencias: Ocorrencias,
   justificativas: Justificativas,
   fechamento: Fechamento,
@@ -73,6 +76,9 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   totais_periodo: TotaisPeriodo,
   quebra_regras: QuebraRegras,
   locais_batidas: LocaisBatidas,
+  empresas: Empresas,
+  configuracoes: Configuracoes,
+  integracoes: Integracoes,
   usuarios: Usuarios,
 };
 

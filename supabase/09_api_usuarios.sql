@@ -23,6 +23,8 @@ begin
                'id', u.id, 'nome', u.nome, 'login', u.login, 'email', u.email, 'status', u.status,
                'perfil_id', u.perfil_id, 'perfil', p.nome, 'is_admin', p.is_admin, 'abrangencia', p.abrangencia,
                'colaborador_id', u.colaborador_id, 'colaborador', c.nome, 'matricula', c.matricula,
+               'empresas', coalesce((select jsonb_agg(ue.empresa_id) from usuario_empresas ue where ue.usuario_id = u.id), '[]'::jsonb),
+               'empresa_colaborador', (select coalesce(e.nome_fantasia, e.razao_social) from empresas e where e.id = c.empresa_id),
                'ultimo_acesso', u.ultimo_acesso, 'trocar_senha', u.trocar_senha,
                'bloqueado', u.bloqueado_ate is not null and u.bloqueado_ate > now(),
                'sessoes', (select count(*) from sessoes s where s.usuario_id = u.id and s.expira_em > now()),
@@ -44,6 +46,10 @@ begin
         from perfis p), '[]'::jsonb),
     'paginas', coalesce((select jsonb_agg(jsonb_build_object('chave', chave, 'nome', nome, 'grupo', grupo)
                                           order by ordem) from paginas), '[]'::jsonb),
+    'empresas', coalesce((select jsonb_agg(jsonb_build_object('id', e.id, 'nome', coalesce(e.nome_fantasia, e.razao_social),
+                                                              'ativo', e.ativo)
+                                           order by coalesce(e.nome_fantasia, e.razao_social))
+                            from empresas e), '[]'::jsonb),
     'colaboradores', coalesce((
       select jsonb_agg(jsonb_build_object(
                'id', c.id, 'nome', c.nome, 'matricula', c.matricula, 'cpf', c.cpf, 'email', c.email,
@@ -117,6 +123,11 @@ begin
                                                               and id is distinct from v_id) then
     raise exception 'Este colaborador já tem um usuário de acesso.';
   end if;
+  -- Empresas de acesso: obrigatórias para quem não é administrador nem tem colaborador vinculado
+  if d ? 'empresas' and not v_perfil.is_admin and v_colab is null
+     and jsonb_array_length(coalesce(d -> 'empresas', '[]'::jsonb)) = 0 then
+    raise exception 'Selecione ao menos uma empresa que o usuário poderá acessar.';
+  end if;
 
   if v_id is null then
     if v_senha is null then raise exception 'Defina a senha inicial do usuário.'; end if;
@@ -150,6 +161,18 @@ begin
        or v_old.colaborador_id is distinct from v_colab then
       delete from sessoes where usuario_id = v_id and (v_id <> v_eu or token_hash <> fn_hash_token(p_token));
     end if;
+  end if;
+
+  if d ? 'empresas' then
+    delete from usuario_empresas ue
+     where ue.usuario_id = v_id
+       and ue.empresa_id not in (select (x #>> '{}')::uuid from jsonb_array_elements(d -> 'empresas') x);
+    insert into usuario_empresas (usuario_id, empresa_id)
+    select v_id, (x #>> '{}')::uuid from jsonb_array_elements(d -> 'empresas') x
+    on conflict do nothing;
+    -- Sessões abertas numa empresa que deixou de ter acesso são encerradas
+    delete from sessoes s where s.usuario_id = v_id and s.empresa_id is not null
+       and s.empresa_id not in (select fn_empresas_do_usuario(v_id));
   end if;
 
   perform fn_exigir_admin_ativo();
@@ -372,13 +395,15 @@ end $$;
 -- registra a batida do próprio colaborador, sem abrir sessão no sistema.
 -- -----------------------------------------------------------------------------
 drop function if exists api_registrar_ponto_rapido(text, text, text);
+drop function if exists api_registrar_ponto_rapido(text, text, text, numeric, numeric, numeric, text);
 create or replace function api_registrar_ponto_rapido(
   p_login text, p_senha text, p_user_agent text default null,
   p_latitude numeric default null, p_longitude numeric default null,
-  p_precisao numeric default null, p_geo_erro text default null)
+  p_precisao numeric default null, p_geo_erro text default null, p_empresa uuid default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_cred    jsonb;
+  v_emp     jsonb;
   v_usuario uuid;
 begin
   v_cred := fn_verificar_credenciais(p_login, p_senha);
@@ -394,7 +419,14 @@ begin
     return jsonb_build_object('ok', false, 'erro', 'Seu usuário não está vinculado a um colaborador.');
   end if;
 
+  -- Empresa onde o ponto é batido (a cerca virtual é a dela)
+  v_emp := fn_escolher_empresa(v_usuario, p_empresa);
+  if not (v_emp ->> 'ok')::boolean then
+    return v_emp;
+  end if;
+
   perform set_config('app.usuario_id', v_usuario::text, true);   -- auditoria
+  perform set_config('app.empresa_id', v_emp ->> 'empresa_id', true);
   begin
     return fn_registrar_batida(v_usuario, 'web', p_latitude, p_longitude, p_precisao, p_geo_erro)
            || jsonb_build_object('ok', true);
@@ -419,7 +451,7 @@ grant execute on function api_acessos_gerar(text, uuid[], text, uuid, text) to a
 grant execute on function api_perfil_salvar(text, jsonb)                to anon, authenticated;
 grant execute on function api_perfil_excluir(text, uuid)                to anon, authenticated;
 grant execute on function api_meu_dashboard(text, date, date)           to anon, authenticated;
-grant execute on function api_registrar_ponto_rapido(text, text, text, numeric, numeric, numeric, text) to anon, authenticated;
+grant execute on function api_registrar_ponto_rapido(text, text, text, numeric, numeric, numeric, text, uuid) to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST)
 notify pgrst, 'reload schema';

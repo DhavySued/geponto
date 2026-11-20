@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { AlertCircle, CheckCircle2, Eye, EyeOff, Fingerprint, LogIn, Lock, User } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Building2, CheckCircle2, Eye, EyeOff, Fingerprint, LogIn, Lock, User } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { AvisoGeo } from '@/components/ponto/Geo';
@@ -9,8 +9,8 @@ import { formatData } from '@/lib/format';
 import { SITUACAO_DIA_BATIDA } from '@/lib/ponto';
 import { obterLocalizacao } from '@/lib/geo';
 import { useHoraOficial } from '@/lib/hooks';
-import { supabase } from '@/lib/supabase';
-import type { RegistroPonto } from '@/lib/types';
+import { rpc } from '@/lib/api';
+import type { EmpresaOpcao, RegistroPonto } from '@/lib/types';
 
 type Modo = 'entrar' | 'ponto';
 
@@ -39,6 +39,9 @@ export default function Login() {
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [comprovante, setComprovante] = useState<RegistroPonto | null>(null);
+  /** Usuário com mais de uma empresa: escolhe em qual vai entrar (ou bater o ponto) */
+  const [empresas, setEmpresas] = useState<EmpresaOpcao[] | null>(null);
+  const [empresa, setEmpresa] = useState('');
   const limpar = useRef<number>();
 
   useEffect(() => () => window.clearTimeout(limpar.current), []);
@@ -53,24 +56,30 @@ export default function Login() {
     setErro(null);
     setSenha('');
     setComprovante(null);
+    setEmpresas(null);
+    setEmpresa('');
   };
 
   const registrarPonto = async () => {
     // A localização acompanha a batida; sem ela o ponto é registrado mesmo assim (Portaria 671)
     const geo = await obterLocalizacao();
-    const { data, error } = await supabase.rpc('api_registrar_ponto_rapido', {
+    const { data, error } = await rpc('api_registrar_ponto_rapido', {
       p_login: login,
       p_senha: senha,
       p_user_agent: navigator.userAgent,
       ...geo,
+      p_empresa: empresa || null,
     });
-    if (error) return setErro('Não foi possível conectar ao servidor. Tente novamente.');
-    const r = data as RegistroPonto & { erro?: string };
+    if (error) return setErro(error.message);
+    const r = data as RegistroPonto & { erro?: string; escolher_empresa?: boolean; empresas?: EmpresaOpcao[] };
+    if (r.escolher_empresa && r.empresas) return setEmpresas(r.empresas);
     if (!r.ok) return setErro(r.erro ?? 'Não foi possível registrar o ponto.');
     // Libera o terminal para o próximo colaborador
     setComprovante(r);
     setLogin('');
     setSenha('');
+    setEmpresas(null);
+    setEmpresa('');
     window.clearTimeout(limpar.current);
     limpar.current = window.setTimeout(() => setComprovante(null), 15_000);
   };
@@ -85,9 +94,16 @@ export default function Login() {
       setEnviando(false);
       return;
     }
-    const falha = await entrar(login, senha);
+    const r = await entrar(login, senha, empresa);
     setEnviando(false);
-    if (falha) setErro(falha);
+    if (r && 'empresas' in r) setEmpresas(r.empresas);
+    else if (r) setErro(r.erro);
+  };
+
+  const voltarCredenciais = () => {
+    setEmpresas(null);
+    setEmpresa('');
+    setErro(null);
   };
 
   return (
@@ -217,6 +233,7 @@ export default function Login() {
                   required
                   value={login}
                   onChange={(e) => setLogin(e.target.value)}
+                  readOnly={!!empresas}
                   className="input h-11 pl-10"
                   placeholder="seu.usuario"
                 />
@@ -236,6 +253,7 @@ export default function Login() {
                   required
                   value={senha}
                   onChange={(e) => setSenha(e.target.value)}
+                  readOnly={!!empresas}
                   className="input h-11 px-10"
                   placeholder="••••••••"
                 />
@@ -249,6 +267,28 @@ export default function Login() {
                 </button>
               </div>
             </div>
+
+            {empresas && (
+              <div className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <label htmlFor="empresa" className="label mb-0 flex items-center gap-1.5">
+                    <Building2 className="h-4 w-4 text-primary-600" /> Empresa
+                  </label>
+                  <button type="button" onClick={voltarCredenciais} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700">
+                    <ArrowLeft className="h-3 w-3" /> Trocar usuário
+                  </button>
+                </div>
+                <p className="mb-2 text-xs text-slate-500">
+                  {modo === 'entrar' ? 'Você tem acesso a mais de uma empresa. Escolha em qual vai entrar.' : 'Escolha a empresa onde você está batendo o ponto.'}
+                </p>
+                <select id="empresa" required autoFocus className="input h-11" value={empresa} onChange={(e) => setEmpresa(e.target.value)}>
+                  <option value="" disabled>Selecione a empresa</option>
+                  {empresas.map((e) => (
+                    <option key={e.id} value={e.id}>{e.nome}{e.cidade ? ` · ${e.cidade}${e.uf ? '/' + e.uf : ''}` : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <Button type="submit" variant="accent" loading={enviando} className="h-11 w-full">
               {modo === 'entrar' ? (

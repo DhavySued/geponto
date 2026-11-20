@@ -86,6 +86,181 @@ begin
   ), '[]'::jsonb);
 end $$;
 
+-- -----------------------------------------------------------------------------
+-- Situação do Colaborador
+-- -----------------------------------------------------------------------------
+-- Último dia de período fechado (as situações até ele ficam travadas)
+create or replace function fn_fechado_ate()
+returns date language sql stable set search_path = public as $$
+  select max(data_fim) from fechamentos;
+$$;
+
+-- Situações (de um colaborador ou de uma lista), da mais recente para a mais antiga
+create or replace function fn_situacoes_json(p_colaborador uuid, p_colaboradores uuid[])
+returns jsonb language sql stable set search_path = public as $$
+  with s as (
+    select s.*,
+           lead(s.data_inicio) over w - 1 as data_fim,
+           row_number() over w = 1 as primeira
+      from colaborador_situacoes s
+     where fn_filtro_colaborador(s.colaborador_id, p_colaborador, p_colaboradores)
+    window w as (partition by s.colaborador_id order by s.data_inicio)
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'id', s.id, 'colaborador_id', s.colaborador_id, 'colaborador', c.nome, 'matricula', c.matricula,
+           'data_inicio', s.data_inicio, 'data_fim', s.data_fim, 'situacao', s.situacao,
+           'cargo_id', s.cargo_id, 'cargo', g.nome, 'departamento_id', s.departamento_id, 'departamento', d.nome,
+           'jornada_id', s.jornada_id, 'jornada', j.nome, 'perfil_evento_id', s.perfil_evento_id, 'perfil_evento', pe.nome,
+           'salario', s.salario, 'motivo', s.motivo, 'primeira', s.primeira,
+           'vigente', s.data_inicio <= fn_hoje() and (s.data_fim is null or s.data_fim >= fn_hoje()),
+           'futura', s.data_inicio > fn_hoje(),
+           'fechado', s.data_inicio <= coalesce(fn_fechado_ate(), '-infinity'::date),
+           'usuario', u.nome, 'alterado_por', u2.nome, 'created_at', s.created_at, 'updated_at', s.updated_at)
+         order by c.nome, s.data_inicio desc), '[]'::jsonb)
+    from s
+    join colaboradores c on c.id = s.colaborador_id
+    left join cargos g          on g.id = s.cargo_id
+    left join departamentos d   on d.id = s.departamento_id
+    left join jornadas j        on j.id = s.jornada_id
+    left join perfis_eventos pe on pe.id = s.perfil_evento_id
+    left join usuarios u        on u.id = s.usuario_id
+    left join usuarios u2       on u2.id = s.alterado_por
+   where fn_visivel(c.id);
+$$;
+
+-- Tela Situação do Colaborador: situações filtradas e as listas para o formulário
+create or replace function api_colaborador_situacoes(p_token text, p_colaboradores uuid[] default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'situacoes_colaborador');
+  return jsonb_build_object(
+    'situacoes', fn_situacoes_json(null, p_colaboradores),
+    'fechado_ate', fn_fechado_ate(),
+    'colaboradores', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', c.id, 'nome', c.nome, 'matricula', c.matricula, 'situacao', c.situacao,
+               'data_admissao', c.data_admissao, 'departamento_id', c.departamento_id,
+               'cargo_id', c.cargo_id, 'jornada_id', c.jornada_id) order by c.nome)
+        from colaboradores c where fn_visivel(c.id)), '[]'::jsonb),
+    'cargos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
+                          from cargos where ativo), '[]'::jsonb),
+    'departamentos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
+                                 from departamentos where ativo), '[]'::jsonb),
+    'jornadas', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
+                            from jornadas where ativo), '[]'::jsonb),
+    'perfis_eventos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome, 'padrao', padrao)
+                                                 order by padrao desc, nome)
+                                  from perfis_eventos where ativo), '[]'::jsonb));
+end $$;
+
+-- Inclui ou altera uma situação. Vale da data informada até a véspera da seguinte.
+create or replace function api_colaborador_situacao_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d jsonb := p_dados;
+  v_id uuid := nullif(d ->> 'id', '')::uuid;
+  v_colab uuid := nullif(d ->> 'colaborador_id', '')::uuid;
+  v_old colaborador_situacoes%rowtype;
+  v_data date;
+  v_adm date;
+  v_primeira date;
+  v_fechado date := fn_fechado_ate();
+  v_perfil uuid;
+  v_jornada uuid := fn_txt(d, 'jornada_id')::uuid;
+  v_usuario uuid := nullif(current_setting('app.usuario_id', true), '')::uuid;
+begin
+  perform fn_auth(p_token, 'situacoes_colaborador', true);
+  if v_id is not null then
+    select * into v_old from colaborador_situacoes where id = v_id;
+    if not found then raise exception 'Situação não encontrada.'; end if;
+    v_colab := v_old.colaborador_id;
+  end if;
+  if v_colab is null then raise exception 'Escolha o colaborador.'; end if;
+  if not fn_visivel(v_colab) then
+    raise exception 'Colaborador fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+  if fn_txt(d, 'data_inicio') is null then raise exception 'Informe a partir de quando a situação vale.'; end if;
+  v_data := fn_txt(d, 'data_inicio')::date;
+
+  select data_admissao into v_adm from colaboradores where id = v_colab;
+  select min(data_inicio) into v_primeira from colaborador_situacoes where colaborador_id = v_colab;
+  if v_data < v_adm then
+    raise exception 'A situação não pode começar antes da admissão (%).', to_char(v_adm, 'DD/MM/YYYY');
+  end if;
+  if v_id is not null and v_old.data_inicio = v_primeira and v_data <> v_old.data_inicio then
+    raise exception 'A primeira situação começa na admissão. Para mudar a data, altere a admissão no cadastro do colaborador.';
+  end if;
+  if v_fechado is not null and (v_data <= v_fechado or v_old.data_inicio <= v_fechado) then
+    raise exception 'O período até % está fechado. Lance a nova situação a partir de % ou reabra o fechamento.',
+      to_char(v_fechado, 'DD/MM/YYYY'), to_char(v_fechado + 1, 'DD/MM/YYYY');
+  end if;
+  if exists (select 1 from colaborador_situacoes
+              where colaborador_id = v_colab and data_inicio = v_data and id is distinct from v_id) then
+    raise exception 'Já existe uma situação em % para este colaborador. Altere-a em vez de criar outra.',
+      to_char(v_data, 'DD/MM/YYYY');
+  end if;
+
+  v_perfil := coalesce(fn_txt(d, 'perfil_evento_id')::uuid, (select id from perfis_eventos where padrao));
+  if not exists (select 1 from perfis_eventos where id = v_perfil and (ativo or id = v_old.perfil_evento_id)) then
+    raise exception 'Escolha uma regra de cálculo ativa.';
+  end if;
+  if v_jornada is not null and not exists (
+       select 1 from jornadas where id = v_jornada and (ativo or id = v_old.jornada_id)) then
+    raise exception 'Escolha uma jornada ativa.';
+  end if;
+
+  perform set_config('app.data_vigencia', v_data::text, true);
+  if v_id is null then
+    insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
+                                       jornada_id, perfil_evento_id, salario, motivo, usuario_id)
+    values (v_colab, v_data, coalesce(fn_txt(d, 'situacao'), 'ativo')::situacao_colaborador,
+            fn_txt(d, 'cargo_id')::uuid, fn_txt(d, 'departamento_id')::uuid, v_jornada, v_perfil,
+            fn_txt(d, 'salario')::numeric, fn_txt(d, 'motivo'), v_usuario)
+    returning id into v_id;
+  else
+    update colaborador_situacoes set
+           data_inicio = v_data, situacao = coalesce(fn_txt(d, 'situacao'), 'ativo')::situacao_colaborador,
+           cargo_id = fn_txt(d, 'cargo_id')::uuid, departamento_id = fn_txt(d, 'departamento_id')::uuid,
+           jornada_id = v_jornada, perfil_evento_id = v_perfil, salario = fn_txt(d, 'salario')::numeric,
+           motivo = fn_txt(d, 'motivo'), alterado_por = v_usuario
+     where id = v_id;
+  end if;
+
+  perform fn_colaborador_situacao_aplicar(v_colab);
+  -- A apuração muda a partir da data: recalcula o banco de horas dos dias já encerrados
+  perform fn_processar_banco_horas(least(v_data, coalesce(v_old.data_inicio, v_data)), fn_hoje() - 1, v_colab);
+  return jsonb_build_object('id', v_id);
+exception
+  when invalid_datetime_format or datetime_field_overflow then
+    raise exception 'Data inválida.';
+  when invalid_text_representation then
+    raise exception 'Valor inválido. Confira o salário e as datas.';
+end $$;
+
+create or replace function api_colaborador_situacao_excluir(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_old colaborador_situacoes%rowtype;
+  v_fechado date := fn_fechado_ate();
+begin
+  perform fn_auth(p_token, 'situacoes_colaborador', true);
+  select * into v_old from colaborador_situacoes where id = p_id;
+  if not found then raise exception 'Situação não encontrada.'; end if;
+  if not fn_visivel(v_old.colaborador_id) then
+    raise exception 'Colaborador fora da sua abrangência de acesso.' using errcode = '42501';
+  end if;
+  if v_old.data_inicio = (select min(data_inicio) from colaborador_situacoes where colaborador_id = v_old.colaborador_id) then
+    raise exception 'A situação da admissão não pode ser excluída. Altere-a, se precisar.';
+  end if;
+  if v_fechado is not null and v_old.data_inicio <= v_fechado then
+    raise exception 'O período até % está fechado. Reabra o fechamento para excluir esta situação.', to_char(v_fechado, 'DD/MM/YYYY');
+  end if;
+  delete from colaborador_situacoes where id = p_id;
+  perform fn_colaborador_situacao_aplicar(v_old.colaborador_id);
+  perform fn_processar_banco_horas(v_old.data_inicio, fn_hoje() - 1, v_old.colaborador_id);
+  return jsonb_build_object('ok', true);
+end $$;
+
 create or replace function api_colaborador_obter(p_token text, p_id uuid)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare v jsonb;
@@ -102,15 +277,7 @@ begin
                   from colaborador_historico h
                   left join usuarios u on u.id = h.usuario_id
                  where h.colaborador_id = c.id), '[]'::jsonb),
-              'jornadas_vigencias', coalesce((
-                select jsonb_agg(jsonb_build_object(
-                         'data_inicio', cj.data_inicio, 'jornada_id', cj.jornada_id, 'jornada', j.nome,
-                         'data_fim', (select min(x.data_inicio) - 1 from colaborador_jornadas x
-                                       where x.colaborador_id = cj.colaborador_id and x.data_inicio > cj.data_inicio))
-                       order by cj.data_inicio desc)
-                  from colaborador_jornadas cj
-                  join jornadas j on j.id = cj.jornada_id
-                 where cj.colaborador_id = c.id), '[]'::jsonb),
+              'situacoes', fn_situacoes_json(c.id, null),
               'acesso', (
                 select jsonb_build_object('usuario_id', u.id, 'login', u.login, 'status', u.status,
                                           'perfil', p.nome, 'ultimo_acesso', u.ultimo_acesso)
@@ -136,8 +303,8 @@ declare
   v_admissao date;
   v_deslig date;
   v_controle date;
-  v_vigencia date;
   v_reproc date;
+  v_primeira date;
   v_constraint text;
   v_old colaboradores%rowtype;
 begin
@@ -156,30 +323,17 @@ begin
   v_admissao := fn_txt(d, 'data_admissao')::date;
   v_deslig   := fn_txt(d, 'data_desligamento')::date;
   v_controle := fn_txt(d, 'controle_ponto_inicio')::date;
-  v_vigencia := coalesce(fn_txt(d, 'data_vigencia')::date, fn_hoje());
 
   -- Perfil de eventos: precisa estar ativo (um perfil inativo só fica em quem já o usava)
-  if fn_txt(d, 'perfil_evento_id') is not null and not exists (
+  if v_id is null and fn_txt(d, 'perfil_evento_id') is not null and not exists (
        select 1 from perfis_eventos pe
         where pe.id = fn_txt(d, 'perfil_evento_id')::uuid
           and (pe.ativo or pe.id = (select c.perfil_evento_id from colaboradores c where c.id = v_id))) then
-    raise exception 'Escolha um perfil de eventos ativo.';
+    raise exception 'Escolha uma regra de cálculo ativa.';
   end if;
 
   if v_controle is not null and v_controle < v_admissao then
     raise exception 'O controle de ponto não pode começar antes da admissão (%).', to_char(v_admissao, 'DD/MM/YYYY');
-  end if;
-  -- A vigência só importa quando muda jornada, cargo, departamento ou situação. Nas demais edições
-  -- (ex.: corrigir o nome de quem ainda vai ser admitido) ela é só a data do registro no histórico.
-  if v_id is not null and v_vigencia < v_admissao then
-    select * into v_old from colaboradores where id = v_id;
-    if v_old.jornada_id is distinct from fn_txt(d, 'jornada_id')::uuid
-       or v_old.cargo_id is distinct from fn_txt(d, 'cargo_id')::uuid
-       or v_old.departamento_id is distinct from fn_txt(d, 'departamento_id')::uuid
-       or v_old.situacao is distinct from v_situacao then
-      raise exception 'A data de vigência não pode ser anterior à admissão (%).', to_char(v_admissao, 'DD/MM/YYYY');
-    end if;
-    v_vigencia := v_admissao;
   end if;
 
   if v_situacao = 'desligado' and v_deslig is null then
@@ -188,16 +342,21 @@ begin
     v_deslig := null;
   end if;
 
-  -- Lido pelo trigger de histórico: as alterações valem a partir desta data
-  perform set_config('app.data_vigencia', v_vigencia::text, true);
+  -- Empresa do colaborador: só uma das empresas a que o usuário tem acesso
+  if fn_txt(d, 'empresa_id') is not null and fn_txt(d, 'empresa_id')::uuid not in
+       (select fn_empresas_do_usuario(nullif(current_setting('app.usuario_id', true), '')::uuid)) then
+    raise exception 'Você não tem acesso à empresa selecionada.';
+  end if;
 
+  -- Na inclusão, situação, cargo, departamento, jornada, regra e salário viram a primeira situação
+  -- (na admissão). Depois disso eles só mudam pela Situação do Colaborador, a partir de uma data.
   if v_id is null then
     insert into colaboradores (
       matricula, nome, nome_social, cpf, pis, rg, data_nascimento, sexo, email, telefone,
       cep, logradouro, numero, complemento, bairro, cidade, uf,
       cargo_id, departamento_id, jornada_id, gestor_id, perfil_evento_id,
       data_admissao, data_desligamento, situacao, salario, observacoes,
-      controla_ponto, controle_ponto_inicio)
+      controla_ponto, controle_ponto_inicio, empresa_id)
     values (
       fn_txt(d, 'matricula'), fn_txt(d, 'nome'), fn_txt(d, 'nome_social'),
       regexp_replace(fn_txt(d, 'cpf'), '[^0-9]', '', 'g'),
@@ -211,13 +370,30 @@ begin
       fn_txt(d, 'perfil_evento_id')::uuid,   -- vazio: o trigger usa o perfil padrão
       v_admissao, v_deslig, v_situacao,
       fn_txt(d, 'salario')::numeric, fn_txt(d, 'observacoes'),
-      coalesce((d ->> 'controla_ponto')::boolean, true), v_controle)
+      coalesce((d ->> 'controla_ponto')::boolean, true), v_controle,
+      fn_txt(d, 'empresa_id')::uuid)   -- vazio: a empresa da sessão
     returning id into v_id;
     v_reproc := v_admissao;
   else
     if fn_txt(d, 'gestor_id')::uuid = v_id then
       raise exception 'O colaborador não pode ser gestor dele mesmo.';
     end if;
+    select * into v_old from colaboradores where id = v_id;
+    if not found then raise exception 'Colaborador não encontrado.'; end if;
+
+    -- A admissão mudou: a primeira situação acompanha (não pode passar das seguintes)
+    if v_admissao <> v_old.data_admissao then
+      select min(data_inicio) into v_primeira from colaborador_situacoes where colaborador_id = v_id;
+      if exists (select 1 from colaborador_situacoes
+                  where colaborador_id = v_id and data_inicio > v_primeira and data_inicio <= v_admissao) then
+        raise exception 'Há situações lançadas até % (Situação do Colaborador). A admissão precisa ser anterior a elas.',
+          to_char(v_admissao, 'DD/MM/YYYY');
+      end if;
+      perform set_config('app.data_vigencia', v_admissao::text, true);
+      update colaborador_situacoes set data_inicio = v_admissao
+       where colaborador_id = v_id and data_inicio = v_primeira;
+    end if;
+
     -- Reprocessa o banco de horas desde a data mais antiga afetada
     select least(c.data_admissao, v_admissao,
                  coalesce((select min(bh.data) from banco_horas bh
@@ -234,24 +410,13 @@ begin
       cep = fn_txt(d, 'cep'), logradouro = fn_txt(d, 'logradouro'), numero = fn_txt(d, 'numero'),
       complemento = fn_txt(d, 'complemento'), bairro = fn_txt(d, 'bairro'), cidade = fn_txt(d, 'cidade'),
       uf = upper(fn_txt(d, 'uf')),
-      cargo_id = fn_txt(d, 'cargo_id')::uuid, departamento_id = fn_txt(d, 'departamento_id')::uuid,
-      jornada_id = fn_txt(d, 'jornada_id')::uuid, gestor_id = fn_txt(d, 'gestor_id')::uuid,
-      perfil_evento_id = coalesce(fn_txt(d, 'perfil_evento_id')::uuid, perfil_evento_id),
-      data_admissao = v_admissao, data_desligamento = v_deslig,
-      situacao = v_situacao, salario = fn_txt(d, 'salario')::numeric, observacoes = fn_txt(d, 'observacoes'),
+      gestor_id = fn_txt(d, 'gestor_id')::uuid,
+      data_admissao = v_admissao, observacoes = fn_txt(d, 'observacoes'),
       controla_ponto = coalesce((d ->> 'controla_ponto')::boolean, true),
-      controle_ponto_inicio = v_controle
+      controle_ponto_inicio = v_controle,
+      empresa_id = coalesce(fn_txt(d, 'empresa_id')::uuid, empresa_id)
     where id = v_id;
-    if not found then raise exception 'Colaborador não encontrado.'; end if;
-
-    -- A jornada da admissão é a primeira vigência
-    if fn_txt(d, 'jornada_id') is not null
-       and not exists (select 1 from colaborador_jornadas where colaborador_id = v_id and data_inicio <= v_admissao) then
-      insert into colaborador_jornadas (colaborador_id, data_inicio, jornada_id)
-      values (v_id, v_admissao,
-              coalesce((select jornada_id from colaborador_jornadas where colaborador_id = v_id
-                         order by data_inicio limit 1), fn_txt(d, 'jornada_id')::uuid));
-    end if;
+    perform fn_colaborador_situacao_aplicar(v_id);
   end if;
 
   -- Mantém o banco de horas do colaborador coerente com jornada, controle e datas
@@ -451,7 +616,7 @@ begin
   perform fn_processar_banco_horas(least(c.data_admissao, coalesce(c.controle_ponto_inicio, c.data_admissao)),
                                    fn_hoje() - 1, c.id)
      from colaboradores c
-    where c.id in (select colaborador_id from colaborador_jornadas where jornada_id = v_id);
+    where c.id in (select colaborador_id from colaborador_situacoes where jornada_id = v_id);
 
   return jsonb_build_object('id', v_id);
 exception
@@ -471,7 +636,7 @@ begin
   select count(distinct colaborador_id) into v_qtd
     from (select id as colaborador_id from colaboradores where jornada_id = p_id
           union all
-          select colaborador_id from colaborador_jornadas where jornada_id = p_id) x;
+          select colaborador_id from colaborador_situacoes where jornada_id = p_id) x;
   if v_qtd > 0 then
     raise exception 'Esta jornada está vinculada a % colaborador(es). Ela fica no histórico deles; desative-a em vez de excluir.', v_qtd;
   end if;
@@ -558,6 +723,7 @@ begin
     tolerancia_modo        = coalesce(fn_txt(d, 'tolerancia_modo'), 'batida'),
     limite_he_diario_min   = coalesce(fn_txt(d, 'limite_he_diario_min')::smallint, 120),
     usa_banco_horas        = coalesce((d ->> 'usa_banco_horas')::boolean, true),
+    bh_multiplicar         = coalesce((d ->> 'bh_multiplicar')::boolean, true),
     noturno_inicio         = coalesce(fn_txt(d, 'noturno_inicio')::time, '22:00'),
     noturno_fim            = coalesce(fn_txt(d, 'noturno_fim')::time, '05:00'),
     percentual_noturno     = coalesce(fn_txt(d, 'percentual_noturno')::numeric, 20),
@@ -623,6 +789,13 @@ grant execute on function api_jornadas_listar(text)              to anon, authen
 grant execute on function api_jornada_salvar(text, jsonb)        to anon, authenticated;
 grant execute on function api_jornada_excluir(text, uuid)        to anon, authenticated;
 grant execute on function api_perfis_eventos_listar(text)        to anon, authenticated;
+grant execute on function api_colaborador_situacoes(text, uuid[])          to anon, authenticated;
+grant execute on function api_colaborador_situacao_salvar(text, jsonb)     to anon, authenticated;
+grant execute on function api_colaborador_situacao_excluir(text, uuid)     to anon, authenticated;
+revoke execute on function fn_situacoes_json(uuid, uuid[])                 from public, anon, authenticated;
+revoke execute on function fn_fechado_ate()                                from public, anon, authenticated;
+revoke execute on function fn_perfil_vigente(uuid, date)                   from public, anon, authenticated;
+revoke execute on function fn_colaborador_situacao_aplicar(uuid)           from public, anon, authenticated;
 grant execute on function api_perfil_evento_salvar(text, jsonb)  to anon, authenticated;
 grant execute on function api_perfil_evento_excluir(text, uuid)  to anon, authenticated;
 
