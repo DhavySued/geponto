@@ -180,6 +180,9 @@ begin
     raise exception 'Colaborador fora da sua abrangência de acesso.' using errcode = '42501';
   end if;
   if fn_txt(d, 'data_inicio') is null then raise exception 'Informe a partir de quando a situação vale.'; end if;
+  if fn_txt(d, 'situacao') = 'desligado' then
+    raise exception 'O desligamento não é uma situação: informe a data de desligamento no cadastro do colaborador.';
+  end if;
   v_data := fn_txt(d, 'data_inicio')::date;
 
   select data_admissao into v_adm from colaboradores where id = v_colab;
@@ -187,8 +190,9 @@ begin
   if v_data < v_adm then
     raise exception 'A situação não pode começar antes da admissão (%).', to_char(v_adm, 'DD/MM/YYYY');
   end if;
-  if v_id is not null and v_old.data_inicio = v_primeira and v_data <> v_old.data_inicio then
-    raise exception 'A primeira situação começa na admissão. Para mudar a data, altere a admissão no cadastro do colaborador.';
+  -- A data de uma situação lançada não muda: para outra data, lance uma nova situação (e exclua esta)
+  if v_id is not null and v_data <> v_old.data_inicio then
+    raise exception 'A data da situação não pode ser alterada. Lance uma nova situação na data certa e exclua esta.';
   end if;
   if v_fechado is not null and (v_data <= v_fechado or v_old.data_inicio <= v_fechado) then
     raise exception 'O período até % está fechado. Lance a nova situação a partir de % ou reabra o fechamento.',
@@ -336,10 +340,10 @@ begin
     raise exception 'O controle de ponto não pode começar antes da admissão (%).', to_char(v_admissao, 'DD/MM/YYYY');
   end if;
 
-  if v_situacao = 'desligado' and v_deslig is null then
-    v_deslig := fn_hoje();
-  elsif v_situacao <> 'desligado' then
-    v_deslig := null;
+  -- O desligamento é a data de desligamento (não é uma situação)
+  if v_situacao = 'desligado' then
+    v_situacao := 'ativo';
+    v_deslig := coalesce(v_deslig, fn_hoje());
   end if;
 
   -- Empresa do colaborador: só uma das empresas a que o usuário tem acesso
@@ -374,6 +378,7 @@ begin
       fn_txt(d, 'empresa_id')::uuid)   -- vazio: a empresa da sessão
     returning id into v_id;
     v_reproc := v_admissao;
+    perform fn_colaborador_situacao_aplicar(v_id);
   else
     if fn_txt(d, 'gestor_id')::uuid = v_id then
       raise exception 'O colaborador não pode ser gestor dele mesmo.';
@@ -411,7 +416,7 @@ begin
       complemento = fn_txt(d, 'complemento'), bairro = fn_txt(d, 'bairro'), cidade = fn_txt(d, 'cidade'),
       uf = upper(fn_txt(d, 'uf')),
       gestor_id = fn_txt(d, 'gestor_id')::uuid,
-      data_admissao = v_admissao, observacoes = fn_txt(d, 'observacoes'),
+      data_admissao = v_admissao, data_desligamento = v_deslig, observacoes = fn_txt(d, 'observacoes'),
       controla_ponto = coalesce((d ->> 'controla_ponto')::boolean, true),
       controle_ponto_inicio = v_controle,
       empresa_id = coalesce(fn_txt(d, 'empresa_id')::uuid, empresa_id)

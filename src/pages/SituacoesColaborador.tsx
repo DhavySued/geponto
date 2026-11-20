@@ -15,6 +15,9 @@ import { opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import type { ColaboradorSituacao, SituacaoColaborador, SituacoesDados } from '@/lib/types';
 
+/** Situações que se lançam aqui (o desligamento é a data de desligamento do cadastro) */
+const SITUACOES: SituacaoColaborador[] = ['ativo', 'ferias', 'afastado'];
+
 const dataBR = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: 'numeric' });
 const dataHoraBR = (s: string) =>
   new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -174,17 +177,15 @@ function SituacaoModal({
           </select>
         </Field>
         <Field
-          label={form.situacao === 'desligado' ? 'Data do desligamento' : 'Vale a partir de'}
+          label="Vale a partir de"
           obrigatorio
-          dica={situacao?.primeira
-            ? 'A primeira situação começa na admissão (para mudar, altere a admissão no cadastro).'
-            : form.situacao === 'desligado'
-              ? 'Último dia apurado. Depois dele o ponto não é mais calculado.'
-              : proxima
+          dica={situacao
+            ? `A data não pode ser alterada.${situacao.primeira ? ' É a da admissão.' : ' Para outra data, lance uma nova situação e exclua esta.'}`
+            : proxima
                 ? `Vale até ${dataBR(vespera(proxima.data_inicio))}, véspera da próxima situação.`
                 : 'Vale dessa data em diante.'}
         >
-          <input type="date" className="input" value={form.data_inicio} min={colab?.data_admissao} disabled={!!situacao?.primeira}
+          <input type="date" className="input" value={form.data_inicio} min={colab?.data_admissao} disabled={!!situacao}
             onChange={(e) => {
               const d = e.target.value;
               if (!situacao && d && form.colaborador_id) preencher(form.colaborador_id, d, { motivo: form.motivo });
@@ -193,7 +194,7 @@ function SituacaoModal({
         </Field>
         <Field label="Situação" obrigatorio>
           <select className="input" value={form.situacao} onChange={(e) => set('situacao', e.target.value as SituacaoColaborador)}>
-            {(Object.keys(SITUACAO) as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
+            {SITUACOES.map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
           </select>
         </Field>
         <Field label="Cargo">
@@ -309,7 +310,7 @@ export default function SituacoesColaborador() {
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Situação do Colaborador</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
             Situação, cargo, departamento, jornada, regra de cálculo e salário valem a partir de uma data, até a véspera da
-            próxima situação. A primeira é a da admissão, criada com o cadastro. Os dados pessoais ficam no{' '}
+            próxima situação. A primeira é a da admissão, criada com o cadastro. O desligamento é a data de desligamento, no cadastro. Os dados pessoais ficam no{' '}
             <Link to="/cadastros/colaboradores" className="font-medium text-primary-600 hover:underline">Cadastro de Colaboradores</Link>.
           </p>
         </div>

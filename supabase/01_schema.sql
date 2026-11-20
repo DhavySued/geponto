@@ -618,21 +618,13 @@ begin
     insert into colaborador_historico (colaborador_id, tipo, descricao, dados_novos, usuario_id, data_vigencia)
     values (new.id, 'admissao', 'Colaborador admitido em ' || to_char(new.data_admissao, 'DD/MM/YYYY'),
             to_jsonb(new) - 'created_at' - 'updated_at', v_usuario, new.data_admissao);
-    -- Primeira situação: a da admissão (e o desligamento, se o colaborador já entra desligado)
+    -- Primeira situação: a da admissão (o desligamento fica só na data de desligamento do cadastro)
     insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
                                        jornada_id, perfil_evento_id, salario, motivo, usuario_id)
     values (new.id, new.data_admissao,
-            case when new.situacao = 'desligado' and coalesce(new.data_desligamento, new.data_admissao) > new.data_admissao
-                 then 'ativo' else new.situacao end,
+            case when new.situacao = 'desligado' then 'ativo' else new.situacao end,
             new.cargo_id, new.departamento_id, new.jornada_id, new.perfil_evento_id, new.salario, 'Admissão', v_usuario)
     on conflict (colaborador_id, data_inicio) do nothing;
-    if new.situacao = 'desligado' and coalesce(new.data_desligamento, new.data_admissao) > new.data_admissao then
-      insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
-                                         jornada_id, perfil_evento_id, salario, motivo, usuario_id)
-      values (new.id, new.data_desligamento, 'desligado', new.cargo_id, new.departamento_id, new.jornada_id,
-              new.perfil_evento_id, new.salario, 'Desligamento', v_usuario)
-      on conflict (colaborador_id, data_inicio) do nothing;
-    end if;
     return new;
   end if;
 
@@ -971,7 +963,7 @@ alter table colaboradores alter column perfil_evento_id set not null;
 -- Situação do Colaborador: o que vale a partir de cada data (situação, cargo, departamento,
 -- jornada, regra de cálculo e salário). A primeira é a da admissão. A apuração de cada dia
 -- usa a situação vigente naquele dia; o cadastro (colaboradores) guarda a vigente hoje.
--- Situação "desligado": a data é a do desligamento (último dia apurado).
+-- O desligamento não é uma situação: fica no cadastro (data de desligamento, último dia apurado).
 -- -----------------------------------------------------------------------------
 create table if not exists colaborador_situacoes (
   id                uuid primary key default gen_random_uuid(),
@@ -999,7 +991,7 @@ alter table colaborador_situacoes enable row level security;
 revoke all on colaborador_situacoes from anon, authenticated;
 
 -- Colaboradores que já existiam: uma situação na admissão e uma a cada troca de jornada já
--- registrada; a situação atual (desligado, férias, afastado) entra na data em que passou a valer.
+-- registrada; a situação atual (férias, afastado) entra na data em que passou a valer.
 insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
                                    jornada_id, perfil_evento_id, salario, motivo)
 select c.id, x.d, 'ativo', c.cargo_id, c.departamento_id,
@@ -1019,16 +1011,30 @@ select c.id, x.d, 'ativo', c.cargo_id, c.departamento_id,
 insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
                                    jornada_id, perfil_evento_id, salario, motivo)
 select c.id, x.d, c.situacao, c.cargo_id, c.departamento_id, c.jornada_id, c.perfil_evento_id, c.salario,
-       case c.situacao when 'desligado' then 'Desligamento' when 'ferias' then 'Férias' else 'Afastamento' end
+       case c.situacao when 'ferias' then 'Férias' else 'Afastamento' end
   from colaboradores c
  cross join lateral (
    select greatest(c.data_admissao,
-            case when c.situacao = 'desligado' then coalesce(c.data_desligamento, c.data_admissao)
-                 else coalesce((select max(h.data_vigencia) from colaborador_historico h
-                                 where h.colaborador_id = c.id and h.tipo = 'situacao'), c.data_admissao) end) as d) x
- where c.situacao <> 'ativo'
+            coalesce((select max(h.data_vigencia) from colaborador_historico h
+                       where h.colaborador_id = c.id and h.tipo = 'situacao'), c.data_admissao)) as d) x
+ where c.situacao in ('ferias', 'afastado')
    and not exists (select 1 from colaborador_situacoes s where s.colaborador_id = c.id and s.situacao <> 'ativo')
 on conflict (colaborador_id, data_inicio) do update set situacao = excluded.situacao, motivo = excluded.motivo;
+
+-- Desligamentos lançados como situação (versão anterior) voltam para a data de desligamento do cadastro
+do $$
+begin
+  if exists (select 1 from colaborador_situacoes where situacao = 'desligado') then
+    update colaboradores c set data_desligamento = coalesce(c.data_desligamento, x.d)
+      from (select colaborador_id, max(data_inicio) as d from colaborador_situacoes
+             where situacao = 'desligado' group by colaborador_id) x
+     where x.colaborador_id = c.id;
+    update colaborador_situacoes s set situacao = 'ativo'
+     where s.situacao = 'desligado'
+       and s.data_inicio = (select min(y.data_inicio) from colaborador_situacoes y where y.colaborador_id = s.colaborador_id);
+    delete from colaborador_situacoes where situacao = 'desligado';
+  end if;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- Justificativas de atraso, saída antecipada e falta (uma por colaborador, dia e tipo)

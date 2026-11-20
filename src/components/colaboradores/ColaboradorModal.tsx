@@ -506,7 +506,7 @@ export function ColaboradorModal({
               {!form.id && (
                 <Field label="Situação">
                   <select className="input" value={form.situacao} onChange={(e) => set('situacao', e.target.value as SituacaoColaborador)}>
-                    {(Object.keys(SITUACAO) as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
+                    {(['ativo', 'ferias', 'afastado'] as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
                   </select>
                 </Field>
               )}
@@ -581,14 +581,12 @@ export function ColaboradorModal({
                   <input className="input tabular-nums" inputMode="decimal" value={form.salario}
                     onChange={(e) => set('salario', e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" />
                 </Field>
-                {form.situacao === 'desligado' && (
-                  <Field label="Data de desligamento" dica="Se ficar em branco, será usada a data de hoje.">
-                    <input type="date" className="input" value={form.data_desligamento} min={form.data_admissao}
-                      onChange={(e) => set('data_desligamento', e.target.value)} />
-                  </Field>
-                )}
                 </>
               )}
+              <Field label="Data de desligamento" dica="Último dia apurado; depois dele o colaborador fica desligado. Em branco: ativo.">
+                <input type="date" className="input" value={form.data_desligamento} min={form.data_admissao || undefined}
+                  onChange={(e) => set('data_desligamento', e.target.value)} />
+              </Field>
               <Field label="Gestor imediato">
                 <select className="input" value={form.gestor_id} onChange={(e) => set('gestor_id', e.target.value)}>
                   <option value="">Nenhum</option>

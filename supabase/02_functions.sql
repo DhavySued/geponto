@@ -351,14 +351,13 @@ returns uuid language sql stable set search_path = public as $$
     (select c.perfil_evento_id from colaboradores c where c.id = p_colaborador));
 $$;
 
--- Leva ao cadastro a situação vigente hoje (situação, cargo, departamento, jornada, regra e salário)
--- e a data de desligamento (a última situação, se for "desligado")
+-- Leva ao cadastro a situação vigente hoje (situação, cargo, departamento, jornada, regra e salário).
+-- Passada a data de desligamento do cadastro, a situação é "desligado".
 create or replace function fn_colaborador_situacao_aplicar(p_colaborador uuid)
 returns void language plpgsql volatile set search_path = public as $$
 declare
   s colaborador_situacoes%rowtype;
-  v_ultima colaborador_situacoes%rowtype;
-  v_deslig date;
+  v_sit situacao_colaborador;
 begin
   select * into s from colaborador_situacoes
    where colaborador_id = p_colaborador and data_inicio <= fn_hoje()
@@ -367,20 +366,18 @@ begin
     select * into s from colaborador_situacoes where colaborador_id = p_colaborador order by data_inicio limit 1;
     if not found then return; end if;
   end if;
-  select * into v_ultima from colaborador_situacoes
-   where colaborador_id = p_colaborador order by data_inicio desc limit 1;
-  v_deslig := case when v_ultima.situacao = 'desligado' then v_ultima.data_inicio end;
+  select case when c.data_desligamento < fn_hoje() then 'desligado'::situacao_colaborador else s.situacao end
+    into v_sit from colaboradores c where c.id = p_colaborador;
 
   perform set_config('app.data_vigencia', s.data_inicio::text, true);
   update colaboradores c set
-         situacao = s.situacao, cargo_id = s.cargo_id, departamento_id = s.departamento_id,
+         situacao = v_sit, cargo_id = s.cargo_id, departamento_id = s.departamento_id,
          jornada_id = s.jornada_id, perfil_evento_id = coalesce(s.perfil_evento_id, c.perfil_evento_id),
-         salario = s.salario, data_desligamento = v_deslig
+         salario = s.salario
    where c.id = p_colaborador
-     and (c.situacao, c.cargo_id, c.departamento_id, c.jornada_id, c.perfil_evento_id, c.salario, c.data_desligamento)
+     and (c.situacao, c.cargo_id, c.departamento_id, c.jornada_id, c.perfil_evento_id, c.salario)
          is distinct from
-         (s.situacao, s.cargo_id, s.departamento_id, s.jornada_id, coalesce(s.perfil_evento_id, c.perfil_evento_id),
-          s.salario, v_deslig);
+         (v_sit, s.cargo_id, s.departamento_id, s.jornada_id, coalesce(s.perfil_evento_id, c.perfil_evento_id), s.salario);
 end $$;
 
 -- Primeiro dia em que o ponto do colaborador é apurado
@@ -1027,8 +1024,11 @@ begin
   if v_ate is null or v_ate < v_ontem then
     -- Situações que passaram a valer desde a última execução vão para o cadastro
     perform fn_colaborador_situacao_aplicar(x.colaborador_id)
-       from (select distinct s.colaborador_id from colaborador_situacoes s
-              where s.data_inicio > coalesce(v_ate, '-infinity'::date) and s.data_inicio <= fn_hoje()) x;
+       from (select s.colaborador_id from colaborador_situacoes s
+              where s.data_inicio > coalesce(v_ate, '-infinity'::date) and s.data_inicio <= fn_hoje()
+             union   -- e quem passou da data de desligamento
+             select c.id from colaboradores c
+              where c.data_desligamento >= coalesce(v_ate, '-infinity'::date) and c.data_desligamento < fn_hoje()) x;
     if v_ate is not null then
       perform fn_processar_banco_horas(v_ate + 1, v_ontem);
     end if;
