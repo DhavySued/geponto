@@ -75,6 +75,7 @@ returns jsonb language sql stable set search_path = public as $$
     'email', u.email,
     'trocar_senha', u.trocar_senha,
     'administrador', u.administrador,
+    'master', u.master,
     'perfil', jsonb_build_object('id', p.id, 'nome', p.nome, 'is_admin', p.is_admin or u.administrador,
                                  'abrangencia', case when p.is_admin or u.administrador then 'todos' else p.abrangencia end),
     -- Empresa da sessão e as empresas a que o usuário tem acesso
@@ -174,25 +175,26 @@ $$;
 -- Confere login e senha, com bloqueio temporário após 5 falhas. Retorna JSON em vez
 -- de lançar exceção para que o contador de tentativas falhas seja persistido (uma
 -- exceção desfaria o UPDATE). Usada pelo login e pelo registro rápido de ponto.
--- Entra com o login, o e-mail ou o CPF do colaborador vinculado ao usuário (com ou sem pontuação).
+-- Todos entram pelo CPF do colaborador vinculado ao usuário (com ou sem pontuação). Só o usuário
+-- master entra pelo login ou e-mail.
 create or replace function fn_verificar_credenciais(p_login text, p_senha text)
 returns jsonb language plpgsql volatile security definer set search_path = public, extensions as $$
 declare
   v_user  usuarios%rowtype;
-  c_erro  constant text := 'Usuário ou senha inválidos.';
+  c_erro  constant text := 'CPF ou senha inválidos.';
   v_cpf   text := case when trim(coalesce(p_login, '')) ~ '^[0-9.\-\s]+$'
                        then nullif(regexp_replace(p_login, '\D', '', 'g'), '') end;
 begin
-  select * into v_user
-    from usuarios
-   where lower(login) = lower(trim(p_login))
-      or lower(email) = lower(trim(p_login))
-   limit 1;
-
-  if not found and length(v_cpf) = 11 then
+  if length(v_cpf) = 11 then
     select u.* into v_user
       from usuarios u join colaboradores c on c.id = u.colaborador_id
-     where regexp_replace(c.cpf, '\D', '', 'g') = v_cpf
+     where not u.master and regexp_replace(c.cpf, '\D', '', 'g') = v_cpf
+     limit 1;
+  else
+    select * into v_user
+      from usuarios
+     where master
+       and (lower(login) = lower(trim(p_login)) or lower(email) = lower(trim(p_login)))
      limit 1;
   end if;
 

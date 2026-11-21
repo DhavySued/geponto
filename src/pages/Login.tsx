@@ -179,13 +179,13 @@ export default function Login() {
           {modo === 'entrar' ? (
             <>
               <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Acesse sua conta</h2>
-              <p className="mt-1.5 text-sm text-slate-500">Entre com o usuário fornecido pelo administrador.</p>
+              <p className="mt-1.5 text-sm text-slate-500">Entre com o seu CPF e a sua senha.</p>
             </>
           ) : (
             <>
               <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Registrar ponto</h2>
               <p className="mt-1.5 text-sm text-slate-500">
-                Informe o seu login e a sua senha. A marcação é feita no seu nome, no horário oficial de Brasília.
+                Informe o seu CPF e a sua senha. A marcação é feita no seu nome, no horário oficial de Brasília.
               </p>
               <div className="mt-6">
                 <Relogio />
@@ -222,7 +222,7 @@ export default function Login() {
 
             <div>
               <label htmlFor="login" className="label">
-                Usuário, e-mail ou CPF
+                CPF
               </label>
               <div className="relative">
                 <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -235,7 +235,7 @@ export default function Login() {
                   onChange={(e) => setLogin(e.target.value)}
                   readOnly={!!empresas}
                   className="input h-11 pl-10"
-                  placeholder="seu.usuario"
+                  placeholder="000.000.000-00"
                 />
               </div>
             </div>
@@ -275,7 +275,7 @@ export default function Login() {
                     <Building2 className="h-4 w-4 text-primary-600" /> Empresa
                   </label>
                   <button type="button" onClick={voltarCredenciais} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700">
-                    <ArrowLeft className="h-3 w-3" /> Trocar usuário
+                    <ArrowLeft className="h-3 w-3" /> Trocar CPF
                   </button>
                 </div>
                 <p className="mb-2 text-xs text-slate-500">

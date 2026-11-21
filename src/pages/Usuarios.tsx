@@ -176,6 +176,7 @@ export default function Usuarios() {
                             <p className="truncate font-medium text-slate-800">
                               {u.nome}
                               {u.id === dados.eu && <span className="ml-1.5 text-xs font-normal text-slate-400">(você)</span>}
+                              {u.master && <span className="ml-1.5 rounded bg-accent-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-700">Master</span>}
                             </p>
                             <p className="truncate font-mono text-xs text-slate-400">{u.login}</p>
                           </div>
@@ -188,7 +189,8 @@ export default function Usuarios() {
                             <p className="text-xs text-slate-400">mat. {u.matricula}</p>
                           </>
                         ) : (
-                          <span className="text-xs text-slate-400">Sem vínculo</span>
+                          u.master ? <span className="text-xs text-slate-400">Entra pelo login</span>
+                            : <span className="text-xs font-medium text-amber-700" title="O acesso é pelo CPF do colaborador vinculado">Sem colaborador: não consegue entrar</span>
                         )}
                       </td>
                       <td className="px-3 py-3">
@@ -224,7 +226,7 @@ export default function Usuarios() {
                                 <LogOut className="h-4 w-4" />
                               </button>
                             )}
-                            {u.id !== dados.eu && (
+                            {u.id !== dados.eu && !u.master && (
                               <button className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                                 title="Excluir usuário" aria-label="Excluir usuário" onClick={() => setExcluindo(u)}>
                                 <Trash2 className="h-4 w-4" />

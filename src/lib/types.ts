@@ -1064,6 +1064,8 @@ export interface UsuarioSistema {
   is_admin: boolean;
   /** Chave "Administrador: acesso a tudo" no próprio usuário */
   administrador: boolean;
+  /** Usuário master: único que entra pelo login; sempre com acesso total */
+  master: boolean;
   /** O perfil é de administrador */
   perfil_admin: boolean;
   abrangencia: Abrangencia;

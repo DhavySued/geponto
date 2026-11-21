@@ -963,6 +963,39 @@ alter table colaboradores alter column perfil_evento_id set not null;
 -- qualquer que seja o perfil
 alter table usuarios add column if not exists administrador boolean not null default false;
 
+-- Usuário master: um só no sistema, sempre com acesso total, o único que entra pelo login (ou e-mail).
+-- Todos os demais entram pelo CPF do colaborador vinculado. Não pode ser excluído, inativado
+-- nem perder o acesso total. É o administrador inicial (99_admin.local.sql).
+alter table usuarios add column if not exists master boolean not null default false;
+create unique index if not exists ux_usuarios_master on usuarios ((true)) where master;
+alter table usuarios drop constraint if exists usuarios_master_admin_check;
+update usuarios set administrador = true where master and not administrador;
+alter table usuarios add constraint usuarios_master_admin_check check (not master or administrador);
+
+create or replace function fn_usuario_master_proteger()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'DELETE' then
+    if old.master then raise exception 'O usuário master não pode ser excluído.'; end if;
+    return old;
+  end if;
+  if old.master and (not new.master or new.status <> 'ativo' or not new.administrador) then
+    raise exception 'O usuário master não pode ser inativado nem perder o acesso total.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_usuarios_master on usuarios;
+create trigger trg_usuarios_master before update or delete on usuarios
+  for each row execute function fn_usuario_master_proteger();
+
+-- Bases já instaladas: o master é o administrador inicial ("geponto") ou, sem ele, o administrador mais antigo
+update usuarios set master = true, administrador = true, status = 'ativo'
+ where id = coalesce(
+         (select id from usuarios where lower(login) = 'geponto'),
+         (select u.id from usuarios u join perfis p on p.id = u.perfil_id
+           where (p.is_admin or u.administrador) and u.status = 'ativo' order by u.created_at limit 1))
+   and not exists (select 1 from usuarios where master);
+
 -- -----------------------------------------------------------------------------
 -- Situação do Colaborador: o que vale a partir de cada data (situação, cargo, departamento,
 -- jornada, regra de cálculo e salário). A primeira é a da admissão. A apuração de cada dia

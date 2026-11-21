@@ -85,7 +85,9 @@ export function UsuarioModal({
   if (!form) return null;
   const perfil = dados.perfis.find((p) => p.id === form.perfil_id);
   const admin = !!perfil?.is_admin || form.administrador;
-  const exigeColaborador = !!perfil && !admin && perfil.abrangencia !== 'todos';
+  const master = !!usuario?.master;
+  // Só o master entra sem CPF: todo outro usuário precisa de colaborador vinculado
+  const exigeColaborador = !master;
   // Só um administrador liga ou desliga o acesso de administrador
   const souAdmin = !!eu?.perfil.is_admin;
   const marcarEmpresa = (id: string, v: boolean) =>
@@ -124,7 +126,7 @@ export function UsuarioModal({
       aberto={aberto}
       onFechar={onFechar}
       titulo={usuario ? `Editar acesso — ${usuario.nome}` : 'Novo usuário'}
-      descricao="Cada colaborador tem o próprio login e só registra o próprio ponto."
+      descricao={master ? 'Usuário master: o único que entra pelo login, sempre com acesso total.' : 'O acesso ao sistema é pelo CPF do colaborador vinculado.'}
       largura="max-w-2xl"
       rodape={
         <>
@@ -139,10 +141,10 @@ export function UsuarioModal({
           label="Colaborador vinculado"
           obrigatorio={exigeColaborador}
           className="sm:col-span-2"
-          dica="O ponto registrado por este login é sempre o deste colaborador."
+          dica={master ? 'Opcional para o master.' : 'Para entrar, o usuário digita o CPF deste colaborador. O ponto registrado é sempre o dele.'}
         >
           <select className="input" value={form.colaborador_id} onChange={(e) => escolherColaborador(e.target.value)}>
-            <option value="">— Sem vínculo (usuário administrativo) —</option>
+            <option value="">{master ? '— Sem vínculo —' : '— Selecione o colaborador —'}</option>
             {colaboradores.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.nome} · mat. {c.matricula}{c.departamento ? ` · ${c.departamento}` : ''}
@@ -153,22 +155,22 @@ export function UsuarioModal({
         <Field label="Nome" obrigatorio>
           <input className="input" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} />
         </Field>
-        <Field label="Login" obrigatorio dica="Sugestão: a matrícula do colaborador.">
+        <Field label="Login" obrigatorio dica={master ? 'O master entra com este login (ou o e-mail).' : 'Identificação interna: para entrar, vale o CPF.'}>
           <input className="input" value={form.login} autoComplete="off"
             onChange={(e) => setForm({ ...form, login: e.target.value.replace(/\s/g, '') })} />
         </Field>
-        <Field label="E-mail" dica="Também pode ser usado para entrar.">
+        <Field label="E-mail" dica={master ? 'Também pode ser usado para entrar.' : undefined}>
           <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         </Field>
         <Field label="Situação" obrigatorio>
-          <select className="input" value={form.status} disabled={proprio}
+          <select className="input" value={form.status} disabled={proprio || master}
             onChange={(e) => setForm({ ...form, status: e.target.value as StatusUsuario })}>
             {Object.entries(STATUS_USUARIO).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </Field>
         <Field label="Perfil de acesso" obrigatorio className="sm:col-span-2"
           dica={perfil ? (perfil.is_admin ? 'Acesso total a todas as telas e colaboradores.' : ABRANGENCIAS[perfil.abrangencia].descricao) : undefined}>
-          <select className="input" value={form.perfil_id} disabled={proprio}
+          <select className="input" value={form.perfil_id} disabled={proprio || master}
             onChange={(e) => setForm({ ...form, perfil_id: e.target.value })}>
             {dados.perfis.map((p) => (
               <option key={p.id} value={p.id}>
@@ -178,7 +180,9 @@ export function UsuarioModal({
           </select>
         </Field>
         <div className="rounded-xl p-3 ring-1 ring-slate-200/80 sm:col-span-2">
-          {perfil?.is_admin ? (
+          {master ? (
+            <p className="text-sm text-slate-600">Usuário <strong>master</strong>: acesso total a tudo, sempre. Não pode ser inativado nem excluído.</p>
+          ) : perfil?.is_admin ? (
             <p className="text-sm text-slate-600">O perfil <strong>{perfil.nome}</strong> já é de administrador: acesso a tudo.</p>
           ) : (
             <>

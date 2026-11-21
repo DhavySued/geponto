@@ -22,7 +22,7 @@ begin
       select jsonb_agg(jsonb_build_object(
                'id', u.id, 'nome', u.nome, 'login', u.login, 'email', u.email, 'status', u.status,
                'perfil_id', u.perfil_id, 'perfil', p.nome, 'is_admin', p.is_admin or u.administrador, 'abrangencia', p.abrangencia,
-               'administrador', u.administrador, 'perfil_admin', p.is_admin,
+               'administrador', u.administrador, 'perfil_admin', p.is_admin, 'master', u.master,
                'colaborador_id', u.colaborador_id, 'colaborador', c.nome, 'matricula', c.matricula,
                'empresas', coalesce((select jsonb_agg(ue.empresa_id) from usuario_empresas ue where ue.usuario_id = u.id), '[]'::jsonb),
                'empresa_colaborador', (select coalesce(e.nome_fantasia, e.razao_social) from empresas e where e.id = c.empresa_id),
@@ -106,12 +106,19 @@ declare
   v_nome    text := fn_txt(d, 'nome');
   v_login   text := fn_txt(d, 'login');
   v_admin   boolean := coalesce((d ->> 'administrador')::boolean, false);
+  v_master  boolean := coalesce((select master from usuarios where id = nullif(d ->> 'id', '')::uuid), false);
 begin
   select * into v_perfil from perfis where id = nullif(d ->> 'perfil_id', '')::uuid;
   if not found then raise exception 'Selecione o perfil de acesso.'; end if;
   -- Sem o campo (telas antigas), mantém o que o usuário já tinha
   if not d ? 'administrador' and v_id is not null then
     select administrador into v_admin from usuarios where id = v_id;
+  end if;
+  if v_master then
+    if v_id <> v_eu then raise exception 'Só o próprio usuário master altera o cadastro dele.'; end if;
+    v_admin := true;
+  elsif v_colab is null then
+    raise exception 'Vincule o usuário a um colaborador: o acesso ao sistema é pelo CPF dele.';
   end if;
   perform fn_exigir_admin_para(v_eu, v_id, v_perfil.id, v_admin);
   if v_id = v_eu and v_admin is distinct from (select administrador from usuarios where id = v_id) then
