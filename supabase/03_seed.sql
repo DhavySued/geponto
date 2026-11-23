@@ -45,6 +45,9 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('relatorio_escalas',  'Relatório de Escalas',      'Relatórios', 88),
   ('relatorio_noturno',  'Relatório de Adicional Noturno', 'Relatórios', 89),
   ('relatorio_folgas',   'Relatório de Folgas',       'Relatórios', 89),
+  ('relatorio_faltas',   'Listagem de Faltas',        'Relatórios', 89),
+  ('relatorio_assiduidade', 'Listagem de Assiduidade', 'Relatórios', 89),
+  ('relatorio_colaboradores', 'Relatório de Colaboradores', 'Relatórios', 89),
   ('empresas',           'Empresas',                  'Configurações', 90),
   ('configuracoes',      'Registro de Ponto',         'Configurações', 92),
   ('config_dashboard',   'Dashboard',                 'Configurações', 93),
@@ -198,6 +201,16 @@ select perfil_id, 'relatorio_noturno', pode_visualizar, false from perfil_permis
 on conflict (perfil_id, pagina) do nothing;
 insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
 select perfil_id, 'relatorio_folgas', pode_visualizar, false from perfil_permissoes where pagina = 'totais_periodo'
+on conflict (perfil_id, pagina) do nothing;
+-- Listagens de faltas e de assiduidade: quem vê os totais do período; dados cadastrais: quem vê os colaboradores
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_faltas', pode_visualizar, false from perfil_permissoes where pagina = 'totais_periodo'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_assiduidade', pode_visualizar, false from perfil_permissoes where pagina = 'totais_periodo'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_colaboradores', pode_visualizar, false from perfil_permissoes where pagina = 'colaboradores'
 on conflict (perfil_id, pagina) do nothing;
 
 insert into tipos_licenca (descricao, abona) values

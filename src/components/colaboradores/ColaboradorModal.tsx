@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { formatData, toISODate } from '@/lib/format';
 import { localizarEndereco } from '@/lib/enderecos';
 import { linkMapa, obterLocalizacao, textoDistancia } from '@/lib/geo';
-import { mascaraCEP, mascaraCPF, mascaraPIS, mascaraTelefone } from '@/lib/mask';
+import { cpfValido, mascaraCEP, mascaraCPF, mascaraPIS, mascaraTelefone } from '@/lib/mask';
 import { api } from '@/lib/api';
 import type {
   AcessoColaborador,
@@ -487,6 +487,9 @@ export function ColaboradorModal({
 
   const perfisEventos = aux?.perfis_eventos ?? [];
   const admissaoInvalida = tentouSalvar && !form.data_admissao;
+  // CPF completo e errado já avisa ao digitar; incompleto, só ao tentar salvar
+  const cpfDigitos = form.cpf.replace(/\D/g, '').length;
+  const cpfInvalido = (tentouSalvar || cpfDigitos === 11) && !cpfValido(form.cpf);
 
   const criarAuxiliar = (tipo: 'departamentos' | 'cargos', campo: 'departamento_id' | 'cargo_id') => async (nome: string) => {
     try {
@@ -505,9 +508,14 @@ export function ColaboradorModal({
     setErro(null);
     setTentouSalvar(true);
     // Leva o usuário à aba do primeiro campo obrigatório vazio
-    if (!form.nome.trim() || !form.matricula.trim() || form.cpf.replace(/\D/g, '').length !== 11) {
+    if (!form.nome.trim() || !form.matricula.trim() || !form.cpf.trim()) {
       setAba('pessoais');
-      setErro('Preencha nome, matrícula e um CPF válido.');
+      setErro('Preencha nome, matrícula e CPF.');
+      return;
+    }
+    if (!cpfValido(form.cpf)) {
+      setAba('pessoais');
+      setErro('CPF inválido. Confira os números digitados.');
       return;
     }
     if (!form.data_admissao) {
@@ -614,8 +622,14 @@ export function ColaboradorModal({
                 <input className="input" value={form.nome_social} onChange={(e) => set('nome_social', e.target.value)} />
               </Field>
               <Field label="CPF" obrigatorio>
-                <input className="input tabular-nums" inputMode="numeric" value={form.cpf}
+                <input className={clsx('input tabular-nums', cpfInvalido && 'border-rose-400 ring-4 ring-rose-100')}
+                  inputMode="numeric" value={form.cpf} aria-invalid={cpfInvalido}
                   onChange={(e) => set('cpf', mascaraCPF(e.target.value))} placeholder="000.000.000-00" />
+                {cpfInvalido && (
+                  <span className="mt-1 block text-[11px] font-medium text-rose-600">
+                    {cpfDigitos === 0 ? 'Campo obrigatório' : cpfDigitos < 11 ? 'CPF incompleto' : 'CPF inválido'}
+                  </span>
+                )}
               </Field>
               <Field label="PIS / NIS">
                 <input className="input tabular-nums" inputMode="numeric" value={form.pis}

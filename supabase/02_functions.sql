@@ -41,6 +41,27 @@ returns text language sql immutable set search_path = public, extensions as $$
   select encode(extensions.digest(p_token, 'sha256'), 'hex');
 $$;
 
+-- CPF válido: 11 dígitos, não todos iguais e com os dois dígitos verificadores corretos
+create or replace function fn_cpf_valido(p_cpf text)
+returns boolean language plpgsql immutable set search_path = public as $$
+declare
+  d text := regexp_replace(coalesce(p_cpf, ''), '\D', '', 'g');
+  s integer;
+  r integer;
+begin
+  if length(d) <> 11 or d ~ '^(\d)\1{10}$' then return false; end if;
+  s := 0;
+  for i in 1..9 loop s := s + substr(d, i, 1)::integer * (11 - i); end loop;
+  r := (s * 10) % 11;
+  if r = 10 then r := 0; end if;
+  if r <> substr(d, 10, 1)::integer then return false; end if;
+  s := 0;
+  for i in 1..10 loop s := s + substr(d, i, 1)::integer * (12 - i); end loop;
+  r := (s * 10) % 11;
+  if r = 10 then r := 0; end if;
+  return r = substr(d, 11, 1)::integer;
+end $$;
+
 -- -----------------------------------------------------------------------------
 -- Sessão e permissões
 -- -----------------------------------------------------------------------------

@@ -27,6 +27,9 @@ import TiposLicenca from '@/pages/TiposLicenca';
 import ArquivoAfd from '@/pages/ArquivoAfd';
 import RelatorioNoturno from '@/pages/RelatorioNoturno';
 import RelatorioFolgas from '@/pages/RelatorioFolgas';
+import RelatorioFaltas from '@/pages/RelatorioFaltas';
+import RelatorioAssiduidade from '@/pages/RelatorioAssiduidade';
+import RelatorioColaboradores from '@/pages/RelatorioColaboradores';
 import ConfigDashboard from '@/pages/ConfigDashboard';
 import MotivosBatida from '@/pages/MotivosBatida';
 import PerfisEventos from '@/pages/PerfisEventos';
@@ -85,6 +88,9 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   afd: ArquivoAfd,
   relatorio_noturno: RelatorioNoturno,
   relatorio_folgas: RelatorioFolgas,
+  relatorio_faltas: RelatorioFaltas,
+  relatorio_assiduidade: RelatorioAssiduidade,
+  relatorio_colaboradores: RelatorioColaboradores,
   config_dashboard: ConfigDashboard,
   justificativas: Justificativas,
   fechamento: Fechamento,

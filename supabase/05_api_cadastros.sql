@@ -342,8 +342,8 @@ begin
         from colaboradores where matricula ~ '^[0-9]{1,15}$'));
   end if;
   if fn_txt(d, 'matricula') is null then raise exception 'Informe a matrícula.'; end if;
-  if length(regexp_replace(coalesce(d ->> 'cpf', ''), '[^0-9]', '', 'g')) <> 11 then
-    raise exception 'Informe um CPF válido (11 dígitos).';
+  if not fn_cpf_valido(d ->> 'cpf') then
+    raise exception 'CPF inválido. Confira os números digitados.';
   end if;
   if fn_txt(d, 'data_admissao') is null then raise exception 'Informe a data de admissão.'; end if;
 

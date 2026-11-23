@@ -21,6 +21,9 @@ export type PaginaChave =
   | 'afd'
   | 'relatorio_noturno'
   | 'relatorio_folgas'
+  | 'relatorio_faltas'
+  | 'relatorio_assiduidade'
+  | 'relatorio_colaboradores'
   | 'config_dashboard'
   | 'justificativas'
   | 'solicitacoes'
@@ -1378,6 +1381,76 @@ export interface RelatorioFolgasItem {
   extra_min: number;
   he_percentual: number;
   realizado: boolean;
+}
+
+export interface RelatorioFaltasItem {
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
+  departamento: string | null;
+  data: string;
+  horario: string | null;
+  previsto_min: number;
+  situacao: 'injustificada' | 'justificada' | 'abonada';
+  motivo: string | null;
+  abonado_min: number;
+  /** Falta descontada na folha (não vai para o banco de horas) */
+  folha: boolean;
+  fechado: boolean;
+}
+
+export interface RelatorioAssiduidadeItem {
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
+  departamento: string | null;
+  dias_previstos: number;
+  dias_trabalhados: number;
+  faltas: number;
+  faltas_abonadas: number;
+  dias_ausencia: number;
+  atrasos: number;
+  atraso_min: number;
+  saidas_antecipadas: number;
+  saida_antecipada_min: number;
+  dias_com_ocorrencia: number;
+}
+
+export interface RelatorioColaboradorItem {
+  colaborador_id: string;
+  matricula: string;
+  nome: string;
+  nome_social: string | null;
+  cpf: string;
+  pis: string | null;
+  rg: string | null;
+  data_nascimento: string | null;
+  sexo: 'M' | 'F' | 'O' | null;
+  email: string | null;
+  telefone: string | null;
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  empresa: string | null;
+  cargo: string | null;
+  cbo: string | null;
+  departamento: string | null;
+  jornada: string | null;
+  regra: string | null;
+  gestor: string | null;
+  data_admissao: string;
+  data_desligamento: string | null;
+  situacao: 'ativo' | 'afastado' | 'ferias' | 'desligado';
+  salario: number | null;
+  controla_ponto: boolean;
+  controle_ponto_inicio: string | null;
+  local_ponto_modo: string | null;
+  usuario: string | null;
+  observacoes: string | null;
 }
 
 export interface RelatorioPeriodo<T> {

@@ -12,8 +12,8 @@ import { formatData, toISODate } from '@/lib/format';
 import { competencia, opcoesColaboradores, paramColaboradores, useFiltrosAux } from '@/lib/hooks';
 import type { RelatorioPeriodo } from '@/lib/types';
 
-/** Máximo de dias por consulta (fim − início ≤ 30: um mês inteiro) */
-const MAX_DIAS = 31;
+/** Máximo padrão de dias por consulta (fim − início ≤ 30: um mês inteiro) */
+const MAX_PADRAO = 31;
 
 export interface ColunaRel<T> {
   titulo: string;
@@ -26,8 +26,10 @@ const diasEntre = (a: string, b: string) => Math.round((new Date(b + 'T12:00').g
 
 /** Relatório com uma linha por colaborador e dia, filtros padrão e limite de 31 dias por consulta. */
 export function RelatorioDiario<T extends { colaborador_id: string; colaborador: string; matricula: string; departamento: string | null; data: string }>({
-  titulo, descricao, icon, rpc, colunas, resumo, arquivo, vazio,
+  titulo, descricao, icon, rpc, colunas, resumo, arquivo, vazio, maxDias = MAX_PADRAO,
 }: {
+  /** Máximo de dias por consulta (o mesmo limite da API) */
+  maxDias?: number;
   titulo: string;
   descricao: string;
   icon: LucideIcon;
@@ -37,6 +39,7 @@ export function RelatorioDiario<T extends { colaborador_id: string; colaborador:
   arquivo: string;
   vazio: string;
 }) {
+  const MAX_DIAS = maxDias;
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });

@@ -129,7 +129,15 @@ function EscalaModal({
   const datas = useMemo(() => datasDaEscala(form.ini, form.fim, form.diasSemana), [form.ini, form.fim, form.diasSemana]);
   const qtdPersonalizados = datas.filter((d) => form.horarios[d]).length;
   const [porDia, setPorDia] = useState(false);
-  useEffect(() => { if (aberto) setPorDia(!!escala && Object.keys(escala.horarios ?? {}).length > 0); }, [aberto, escala]);
+  // Escala de trabalho: o mesmo horário em todos os dias ou um horário para cada dia
+  const [modoHorario, setModoHorario] = useState<'unico' | 'por_dia'>('unico');
+  useEffect(() => {
+    if (!aberto) return;
+    const temProprio = !!escala && Object.keys(escala.horarios ?? {}).length > 0;
+    setPorDia(temProprio);
+    setModoHorario(temProprio && escala?.tipo === 'trabalho' ? 'por_dia' : 'unico');
+  }, [aberto, escala]);
+  const cadaDia = form.tipo === 'trabalho' && modoHorario === 'por_dia';
   const padrao = (): HorarioEscalaDia => ({
     tipo: form.tipo, entrada: form.entrada, saida_intervalo: form.saida_intervalo, retorno_intervalo: form.retorno_intervalo, saida: form.saida,
   });
@@ -138,11 +146,29 @@ function EscalaModal({
     setForm((f) => ({ ...f, horarios: { ...f.horarios, [d]: { ...(f.horarios[d] ?? padrao()), ...patch } } }));
   const restaurarDia = (d: string) =>
     setForm((f) => { const h = { ...f.horarios }; delete h[d]; return { ...f, horarios: h }; });
+  /** Repete o horário do dia nos dias seguintes da escala */
+  const repetirAbaixo = (d: string) => {
+    const h = doDia(d);
+    setForm((f) => ({
+      ...f,
+      horarios: { ...f.horarios, ...Object.fromEntries(datas.filter((x) => x > d).map((x) => [x, { ...h }])) },
+    }));
+  };
+  const mudarModo = (m: 'unico' | 'por_dia') => {
+    setModoHorario(m);
+    // Horário diferente por dia: cada dia começa com o horário único já preenchido;
+    // mesmo horário: os horários próprios dos dias são descartados
+    setForm((f) => ({ ...f, horarios: m === 'por_dia' ? f.horarios : {} }));
+  };
 
   const salvar = async () => {
     setErro(null);
     if (!form.nome.trim()) return setErro('Dê um nome à escala.');
     if (longo) return setErro(`A escala pode ter no máximo ${MAX_DIAS} dias.`);
+    if (cadaDia) {
+      const semHorario = datas.find((d) => { const h = doDia(d); return h.tipo === 'trabalho' && (!h.entrada || !h.saida); });
+      if (semHorario) return setErro(`Informe a entrada e a saída de ${dataBR(semHorario)} (ou desmarque "Trabalha" nesse dia).`);
+    }
     setSalvando(true);
     try {
       const r = await api<{ id: string; dias: number }>('api_escala_lancamento_salvar', {
@@ -154,13 +180,16 @@ function EscalaModal({
           data_fim: form.fim,
           dias_semana: form.diasSemana,
           colaboradores: form.colaboradores,
-          entrada: form.tipo === 'trabalho' ? form.entrada : null,
-          saida_intervalo: form.tipo === 'trabalho' ? form.saida_intervalo : null,
-          retorno_intervalo: form.tipo === 'trabalho' ? form.retorno_intervalo : null,
-          saida: form.tipo === 'trabalho' ? form.saida : null,
+          // Horário diferente por dia: não há horário único, cada dia leva o seu
+          entrada: form.tipo === 'trabalho' && !cadaDia ? form.entrada : null,
+          saida_intervalo: form.tipo === 'trabalho' && !cadaDia ? form.saida_intervalo : null,
+          retorno_intervalo: form.tipo === 'trabalho' && !cadaDia ? form.retorno_intervalo : null,
+          saida: form.tipo === 'trabalho' && !cadaDia ? form.saida : null,
           observacao: form.observacao,
           // Só os dias do período atual
-          horarios: Object.fromEntries(datas.filter((d) => form.horarios[d]).map((d) => [d, form.horarios[d]])),
+          horarios: cadaDia
+            ? Object.fromEntries(datas.map((d) => [d, doDia(d)]))
+            : Object.fromEntries(datas.filter((d) => form.horarios[d]).map((d) => [d, form.horarios[d]])),
         },
       });
       toast(escala ? `Escala alterada (${r.dias} dia(s)).` : `Escala "${form.nome.trim()}" lançada em ${r.dias} dia(s).`);
@@ -251,6 +280,19 @@ function EscalaModal({
         </p>
 
         {form.tipo === 'trabalho' && (
+          <Field label="Horário" grupo>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 text-sm font-medium">
+              {([['unico', 'Mesmo horário em todos os dias'], ['por_dia', 'Horário diferente em cada dia']] as const).map(([m, rotulo]) => (
+                <button key={m} type="button" disabled={somenteLeitura} onClick={() => mudarModo(m)}
+                  className={clsx('rounded-lg px-2 py-2 transition', modoHorario === m ? 'bg-white text-primary-700 shadow-soft' : 'text-slate-500')}>
+                  {rotulo}
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+
+        {form.tipo === 'trabalho' && !cadaDia && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {hora('entrada', 'Entrada', true)}
             {hora('saida_intervalo', 'Saída interv.')}
@@ -261,20 +303,31 @@ function EscalaModal({
 
         {datas.length > 0 && (
           <div className="rounded-xl ring-1 ring-slate-200/80">
-            <button type="button" onClick={() => setPorDia((v) => !v)}
-              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
-              <span>
-                <span className="block text-sm font-medium text-slate-800">Horário de cada dia</span>
+            {cadaDia ? (
+              <div className="px-4 py-3">
+                <span className="block text-sm font-medium text-slate-800">Horário de cada dia ({datas.length} dia(s))</span>
                 <span className="block text-xs text-slate-500">
-                  {qtdPersonalizados
-                    ? `${qtdPersonalizados} de ${datas.length} dia(s) com horário próprio; os demais seguem o horário acima.`
-                    : 'Todos os dias seguem o horário acima. Abra para mudar o horário (ou dar folga) em dias específicos.'}
+                  Informe entrada e saída de cada dia. Desmarque "Trabalha" para folga no dia. "Repetir ↓" copia o horário do dia para os dias seguintes.
                 </span>
-              </span>
-              <span className="text-xs font-medium text-primary-600">{porDia ? 'Recolher' : 'Personalizar'}</span>
-            </button>
-            {porDia && (
-              <div className="max-h-[360px] overflow-y-auto border-t border-slate-100">
+              </div>
+            ) : (
+              <button type="button" onClick={() => setPorDia((v) => !v)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                <span>
+                  <span className="block text-sm font-medium text-slate-800">Exceções por dia</span>
+                  <span className="block text-xs text-slate-500">
+                    {qtdPersonalizados
+                      ? `${qtdPersonalizados} de ${datas.length} dia(s) com horário próprio; os demais seguem o horário acima.`
+                      : form.tipo === 'trabalho'
+                        ? 'Todos os dias seguem o horário acima. Abra para dar folga em dias específicos.'
+                        : 'Todos os dias são folga. Abra para colocar trabalho em dias específicos.'}
+                  </span>
+                </span>
+                <span className="text-xs font-medium text-primary-600">{porDia ? 'Recolher' : 'Personalizar'}</span>
+              </button>
+            )}
+            {(porDia || cadaDia) && (
+              <div className={clsx('overflow-y-auto border-t border-slate-100', cadaDia ? 'max-h-[440px]' : 'max-h-[360px]')}>
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-slate-50 text-left text-xs text-slate-400">
                     <tr>
@@ -298,7 +351,7 @@ function EscalaModal({
                         </td>
                       );
                       return (
-                        <tr key={d} className={clsx(proprio && 'bg-primary-50/40')}>
+                        <tr key={d} className={clsx(proprio && !cadaDia && 'bg-primary-50/40', cadaDia && h.tipo === 'folga' && 'bg-amber-50/50')}>
                           <td className="whitespace-nowrap px-3 py-1.5 text-xs capitalize text-slate-700">
                             {formatData(d, { weekday: 'short', day: '2-digit', month: '2-digit' })}
                           </td>
@@ -313,8 +366,12 @@ function EscalaModal({
                           {campo('saida_intervalo')}
                           {campo('retorno_intervalo')}
                           {campo('saida')}
-                          <td className="px-2 py-1.5 text-right">
-                            {proprio && !somenteLeitura && (
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right">
+                            {cadaDia && !somenteLeitura && d !== datas[datas.length - 1] && (
+                              <button type="button" onClick={() => repetirAbaixo(d)} className="text-[11px] text-slate-400 hover:text-primary-600"
+                                title="Copiar este horário para os dias seguintes">Repetir ↓</button>
+                            )}
+                            {proprio && !cadaDia && !somenteLeitura && (
                               <button type="button" onClick={() => restaurarDia(d)} className="text-[11px] text-slate-400 hover:text-primary-600"
                                 title="Voltar ao horário da escala">padrão</button>
                             )}
@@ -424,7 +481,8 @@ function LinhaEscala({ e, podeEditar, onAbrir, onExcluir }: { e: EscalaLancament
         <p className="mt-0.5 text-sm text-slate-600">
           {e.data_inicio === e.data_fim ? dataBR(e.data_inicio) : `${dataBR(e.data_inicio)} a ${dataBR(e.data_fim)}`}
           {' · '}{textoDias(e.dias_semana)}
-          {e.tipo === 'trabalho' && ` · ${horarioCurto(e)}`}
+          {e.tipo === 'trabalho' && ` · ${horarioCurto(e) || 'horário por dia'}`}
+          {e.tipo === 'trabalho' && horarioCurto(e) && Object.keys(e.horarios ?? {}).length > 0 && ' (com exceções)'}
           {' · '}{e.dias} dia(s)
         </p>
         <p className="mt-1 flex flex-wrap items-center gap-1">
