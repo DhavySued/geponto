@@ -22,7 +22,13 @@ import Integracoes from '@/pages/Integracoes';
 import Empresas from '@/pages/Empresas';
 import Login from '@/pages/Login';
 import MeuPonto from '@/pages/MeuPonto';
-import Ocorrencias from '@/pages/Ocorrencias';
+import Ocorrencias, { Afastamentos } from '@/pages/Ocorrencias';
+import TiposLicenca from '@/pages/TiposLicenca';
+import ArquivoAfd from '@/pages/ArquivoAfd';
+import RelatorioNoturno from '@/pages/RelatorioNoturno';
+import RelatorioFolgas from '@/pages/RelatorioFolgas';
+import ConfigDashboard from '@/pages/ConfigDashboard';
+import MotivosBatida from '@/pages/MotivosBatida';
 import PerfisEventos from '@/pages/PerfisEventos';
 import Escalas from '@/pages/Escalas';
 import QuebraRegras from '@/pages/QuebraRegras';
@@ -73,6 +79,13 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   lancamento_manual: TratamentoBatidas,
   feriados: Feriados,
   ocorrencias: Ocorrencias,
+  afastamentos: Afastamentos,
+  tipos_licenca: TiposLicenca,
+  motivos_batida: MotivosBatida,
+  afd: ArquivoAfd,
+  relatorio_noturno: RelatorioNoturno,
+  relatorio_folgas: RelatorioFolgas,
+  config_dashboard: ConfigDashboard,
   justificativas: Justificativas,
   fechamento: Fechamento,
   espelho_ponto: EspelhoPonto,

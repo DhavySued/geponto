@@ -29,7 +29,11 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('consulta_batidas',   'Consulta de Batidas',       'Movimentos', 65),
   ('lancamento_manual',  'Tratamento de Batidas',     'Movimentos', 70),
   ('escalas',            'Escalas',                   'Movimentos', 71),
-  ('ocorrencias',        'Ocorrências e Afastamentos','Movimentos', 72),
+  ('ocorrencias',        'Ocorrências',               'Movimentos', 72),
+  ('afastamentos',       'Afastamentos',              'Movimentos', 72),
+  ('afd',                'Arquivo AFD',               'Movimentos', 79),
+  ('tipos_licenca',      'Tipos de Licença',          'Cadastros',  46),
+  ('motivos_batida',     'Motivos de Batida',         'Cadastros',  47),
   ('justificativas',     'Justificativas',            'Movimentos', 73),
   ('solicitacoes',       'Solicitações',              'Movimentos', 74),
   ('fechamento',         'Fechamento de Período',     'Movimentos', 78),
@@ -39,8 +43,11 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('locais_batidas',     'Locais das Batidas',        'Relatórios', 86),
   ('relatorio_banco_horas', 'Relatório de Banco de Horas', 'Relatórios', 87),
   ('relatorio_escalas',  'Relatório de Escalas',      'Relatórios', 88),
+  ('relatorio_noturno',  'Relatório de Adicional Noturno', 'Relatórios', 89),
+  ('relatorio_folgas',   'Relatório de Folgas',       'Relatórios', 89),
   ('empresas',           'Empresas',                  'Configurações', 90),
   ('configuracoes',      'Registro de Ponto',         'Configurações', 92),
+  ('config_dashboard',   'Dashboard',                 'Configurações', 93),
   ('integracoes',        'Integrações (API)',         'Configurações', 94),
   ('auditoria',          'Log e Auditoria',           'Configurações', 96)
 on conflict (chave) do update
@@ -166,6 +173,43 @@ insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
 select perfil_id, 'situacoes_colaborador', pode_visualizar, pode_editar
   from perfil_permissoes where pagina = 'colaboradores'
 on conflict (perfil_id, pagina) do nothing;
+
+-- Afastamentos e os cadastros de tipos de licença e motivos: quem cuida das ocorrências / do tratamento
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'afastamentos', pode_visualizar, pode_editar from perfil_permissoes where pagina = 'ocorrencias'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'tipos_licenca', pode_visualizar, pode_editar from perfil_permissoes where pagina = 'ocorrencias'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'motivos_batida', pode_visualizar, pode_editar from perfil_permissoes where pagina = 'lancamento_manual'
+on conflict (perfil_id, pagina) do nothing;
+
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'afd', pode_visualizar, false from perfil_permissoes where pagina = 'fechamento'
+on conflict (perfil_id, pagina) do nothing;
+-- Configuração do dashboard: quem cuida das configurações do registro de ponto
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'config_dashboard', pode_visualizar, pode_editar from perfil_permissoes where pagina = 'configuracoes'
+on conflict (perfil_id, pagina) do nothing;
+-- Relatórios de adicional noturno e de folgas: quem vê os totais do período
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_noturno', pode_visualizar, false from perfil_permissoes where pagina = 'totais_periodo'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_folgas', pode_visualizar, false from perfil_permissoes where pagina = 'totais_periodo'
+on conflict (perfil_id, pagina) do nothing;
+
+insert into tipos_licenca (descricao, abona) values
+  ('Licença maternidade', true),
+  ('Licença paternidade', true),
+  ('Auxílio-doença (INSS)', true),
+  ('Acidente de trabalho', true),
+  ('Licença casamento (gala)', true),
+  ('Licença nojo (falecimento)', true),
+  ('Serviço militar', true),
+  ('Licença não remunerada', false)
+on conflict (descricao) do nothing;
 
 -- Relatórios de Banco de Horas e de Escalas: quem vê o banco de horas / as escalas vê o relatório
 insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)

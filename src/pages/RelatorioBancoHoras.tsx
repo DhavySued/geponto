@@ -1,13 +1,14 @@
 import clsx from 'clsx';
 import { AlertTriangle, Download, Hourglass, Printer, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { api } from '@/lib/api';
 import { baixarArquivo } from '@/lib/exportacao';
-import { formatData, formatMinutos } from '@/lib/format';
+import { formatMinutos } from '@/lib/format';
 import { competencia, opcoesColaboradores, paramColaboradores, useFiltrosAux } from '@/lib/hooks';
 import type { RelatorioBancoHoras as Dados, RelatorioBancoHorasItem } from '@/lib/types';
 
@@ -129,9 +130,7 @@ export default function RelatorioBancoHoras() {
         <div className="card"><EmptyState icon={Hourglass} titulo="Nenhum colaborador encontrado" descricao="Não há banco de horas com esses filtros." /></div>
       ) : (
         <>
-          <p className="hidden text-sm text-slate-600 print:block">
-            Período de {formatData(periodo.ini)} a {formatData(periodo.fim)} · {visiveis.length} colaborador(es)
-          </p>
+          <CabecalhoImpressao titulo="Relatório de banco de horas" periodo={periodo} />
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setVer('')} className={chip(!ver)}>Todos · {itens.length}</button>
             {contagem.positivo > 0 && <button onClick={() => setVer('positivo')} className={chip(ver === 'positivo')}>Saldo positivo · {contagem.positivo}</button>}

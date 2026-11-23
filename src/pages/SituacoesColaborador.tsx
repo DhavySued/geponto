@@ -79,7 +79,7 @@ function SituacaoModal({
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const todas = dados?.situacoes ?? [];
-  const somenteLeitura = !podeEditar || !!situacao?.fechado;
+  const somenteLeitura = !podeEditar || !!situacao?.fechado || !!situacao?.primeira;
   const colab = dados?.colaboradores.find((c) => c.id === form.colaborador_id);
 
   // Nova situação: parte do que vale na data (o usuário muda só o que mudou)
@@ -163,6 +163,11 @@ function SituacaoModal({
       }
     >
       <AlertaErro mensagem={erro} />
+      {situacao?.primeira && !situacao.fechado && (
+        <p className="mb-4 flex items-center gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 ring-1 ring-amber-200">
+          <Lock className="h-4 w-4 shrink-0" /> Esta é a situação da admissão e não pode ser alterada aqui. Se quiser alterá-la, altere no cadastro do colaborador (aba Profissional).
+        </p>
+      )}
       {situacao?.fechado && (
         <p className="mb-4 flex items-center gap-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-600 ring-1 ring-slate-200">
           <Lock className="h-4 w-4" /> Esta situação começa num período fechado e não pode ser alterada.
@@ -400,14 +405,8 @@ export default function SituacoesColaborador() {
                   return (
                     <tr key={x.id} className={clsx(x.vigente && 'bg-primary-50/50', novoColaborador && i > 0 && 'border-t-2 border-slate-200')}>
                       <td className="px-4 py-2.5 align-top">
-                        {novoColaborador ? (
-                          <>
-                            <p className="font-medium text-slate-800">{x.colaborador}</p>
-                            <p className="text-xs text-slate-400">Matrícula {x.matricula}</p>
-                          </>
-                        ) : (
-                          <span className="text-xs text-slate-300">〃</span>
-                        )}
+                        <p className={clsx('font-medium', novoColaborador ? 'text-slate-800' : 'text-slate-600')}>{x.colaborador}</p>
+                        <p className="text-xs text-slate-400">Matrícula {x.matricula}</p>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 align-top tabular-nums text-slate-800">
                         {dataBR(x.data_inicio)}
@@ -438,7 +437,7 @@ export default function SituacoesColaborador() {
                           )}
                           <Button variant="ghost" className="h-8 px-2" onClick={() => setModal({ aberto: true, situacao: x, colaborador: x.colaborador_id })}
                             title={`Lançada${x.usuario ? ` por ${x.usuario}` : ''} em ${dataHoraBR(x.created_at)}${x.alterado_por ? ` · alterada por ${x.alterado_por}` : ''}`}>
-                            <Pencil className="h-4 w-4" /> {podeEditar && !x.fechado ? 'Alterar' : 'Ver'}
+                            <Pencil className="h-4 w-4" /> {podeEditar && !x.fechado && !x.primeira ? 'Alterar' : 'Ver'}
                           </Button>
                           {podeEditar && !x.fechado && !x.primeira && (
                             <Button variant="ghost" className="h-8 px-2 text-rose-600 hover:bg-rose-50" onClick={() => setExcluir(x)}>
@@ -461,6 +460,7 @@ export default function SituacoesColaborador() {
         aberto={escolher}
         onFechar={() => setEscolher(false)}
         titulo="Qual colaborador deseja consultar?"
+        largura="max-w-3xl"
         descricao="Escolha um ou mais. Se fechar sem escolher, aparecem todos."
         rodape={
           <>
@@ -475,7 +475,7 @@ export default function SituacoesColaborador() {
           <ComboboxChips opcoes={opcoesColaboradores(dados?.colaboradores)} valor={escolhidos} onChange={setEscolhidos}
             placeholder="Buscar por nome ou matrícula…" rotuloTodos="Todos os colaboradores" />
         </Field>
-        <div className="h-48" aria-hidden />
+        <div className="h-80" aria-hidden />
       </Modal>
 
       <SituacaoModal

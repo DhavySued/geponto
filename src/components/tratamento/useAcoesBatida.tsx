@@ -244,6 +244,23 @@ function BatidaFormModal({
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const motivos = aux.motivos.filter((m) => m.aplicacao !== 'desconsideracao');
+  // Inclusão: já vem com o horário previsto da marcação que falta no dia (o usuário pode mudar)
+  const [previstas, setPrevistas] = useState<{ sigla: string; hora: string; batida: string | null }[]>([]);
+  const [horaManual, setHoraManual] = useState(false);
+  useEffect(() => {
+    if (modo !== 'incluir' || !colab || !dia) { setPrevistas([]); return; }
+    let vivo = true;
+    api<{ previstas: { sigla: string; hora: string; batida: string | null }[]; sugestao: { sigla: string; hora: string } | null }>(
+      'api_batida_sugestao', { p_colaborador: colab, p_data: dia })
+      .then((r) => {
+        if (!vivo) return;
+        setPrevistas(r.previstas);
+        if (!horaManual && r.sugestao) setHora(r.sugestao.hora);
+      })
+      .catch(() => vivo && setPrevistas([]));
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo, colab, dia]);
 
   const salvar = async () => {
     if (!colab) return setErro('Selecione o empregado.');
@@ -290,8 +307,26 @@ function BatidaFormModal({
           <input type="date" className="input" value={dia} max={toISODate(new Date())} onChange={(e) => setDia(e.target.value)} />
         </Field>
         <Field label="Hora" obrigatorio>
-          <input type="time" className="input tabular-nums" value={hora} onChange={(e) => setHora(e.target.value)} autoFocus />
+          <input type="time" className="input tabular-nums" value={hora} onChange={(e) => { setHora(e.target.value); setHoraManual(true); }} autoFocus />
         </Field>
+        {modo === 'incluir' && previstas.length > 0 && (
+          <div className="sm:col-span-2">
+            <p className="mb-1.5 text-xs text-slate-500">Previsto para o dia (clique para usar o horário):</p>
+            <div className="flex flex-wrap gap-1.5">
+              {previstas.map((p) => (
+                <button key={p.sigla} type="button" disabled={!!p.batida}
+                  onClick={() => { setHora(p.hora); setHoraManual(true); }}
+                  className={clsx('rounded-lg px-2.5 py-1 text-xs tabular-nums ring-1 transition',
+                    p.batida ? 'cursor-default bg-slate-50 text-slate-400 ring-slate-200'
+                      : hora === p.hora ? 'bg-primary-600 font-medium text-white ring-primary-600'
+                        : 'bg-white text-slate-700 ring-slate-200 hover:bg-primary-50')}
+                  title={p.batida ? `Já tem batida às ${p.batida}` : 'Usar este horário'}>
+                  {rotuloMarcacao(p.sigla[0] as Sentido, Number(p.sigla.slice(1)))} {p.hora}{p.batida && ` · batida ${p.batida}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <Field label="Motivo da inclusão" obrigatorio className="sm:col-span-2">
           <select className="input" value={motivo} onChange={(e) => setMotivo(e.target.value)}>
             <option value="">Selecione…</option>

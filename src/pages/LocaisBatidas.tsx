@@ -3,6 +3,7 @@ import { AlertTriangle, MapPinned, Printer, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { EnderecoLink } from '@/components/ponto/Geo';
 import { Badge } from '@/components/ui/Badge';
+import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
@@ -131,9 +132,7 @@ export default function LocaisBatidas() {
         </div>
       ) : (
         <>
-          <p className="hidden text-sm text-slate-600 print:block">
-            Período de {formatData(periodo.ini)} a {formatData(periodo.fim)} · {visiveis.length} batida(s)
-          </p>
+          <CabecalhoImpressao titulo="Locais das batidas" periodo={periodo} />
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setVer('')} className={chip(!ver)}>Todas · {dados.itens.length}</button>
             {SITUACOES.filter((s) => contagem[s.valor]).map((s) => (

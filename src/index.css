@@ -15,10 +15,14 @@
 @media print {
   @page {
     size: A4 landscape;
-    margin: 10mm;
+    margin: 0;
   }
   body {
     @apply bg-white;
+    padding: 9mm 11mm;
+  }
+  thead {
+    display: table-header-group;
   }
 }
 

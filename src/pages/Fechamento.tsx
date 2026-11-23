@@ -100,7 +100,7 @@ export default function Fechamento() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Fechamento de período</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Confira as pendências da competência e feche o período: batidas, ocorrências e banco de horas desses dias ficam congelados para a folha.
+          Confira as pendências da competência e feche o período: batidas, ocorrências e banco de horas desses dias ficam congelados para a folha. Cada empresa fecha a sua competência: o fechamento vale só para a empresa em que você está.
         </p>
       </div>
 

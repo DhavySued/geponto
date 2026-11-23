@@ -1,8 +1,9 @@
 import clsx from 'clsx';
-import { AlertTriangle, Fingerprint, MoreHorizontal, Plus, Search } from 'lucide-react';
+import { AlertTriangle, CopyPlus, Fingerprint, MoreHorizontal, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BatidaChip, LegendaBatidas, STATUS_BATIDA } from '@/components/tratamento/BatidaChip';
 import { useAcoesBatida } from '@/components/tratamento/useAcoesBatida';
+import { BatidasLoteModal } from '@/components/tratamento/BatidasLoteModal';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { paramColaboradores } from '@/lib/hooks';
@@ -37,6 +38,7 @@ export default function TratamentoBatidas() {
   // Cada mudança de filtro dispara uma pesquisa: só a mais recente pode preencher a lista
   // (senão a resposta lenta de "todos os empregados" chega depois e sobrescreve a filtrada).
   const ultimaPesquisa = useRef(0);
+  const [lote, setLote] = useState(false);
 
   useEffect(() => {
     api<TratamentoAux>('api_tratamento_auxiliares')
@@ -82,9 +84,14 @@ export default function TratamentoBatidas() {
           </p>
         </div>
         {aux?.pode_editar && (
-          <Button variant="accent" onClick={() => acoes.incluir(filtros.colaboradores.length === 1 ? filtros.colaboradores[0] : null)}>
-            <Plus className="h-4 w-4" /> Incluir batida
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setLote(true)}>
+              <CopyPlus className="h-4 w-4" /> Incluir em lote
+            </Button>
+            <Button variant="accent" onClick={() => acoes.incluir(filtros.colaboradores.length === 1 ? filtros.colaboradores[0] : null)}>
+              <Plus className="h-4 w-4" /> Incluir batida
+            </Button>
+          </div>
         )}
       </div>
 
@@ -221,6 +228,7 @@ export default function TratamentoBatidas() {
 
       <ContextMenu menu={acoes.menu} onFechar={acoes.fecharMenu} />
       {acoes.modais}
+      {aux && <BatidasLoteModal aberto={lote} aux={aux} onFechar={() => setLote(false)} onSalvo={() => { setLote(false); pesquisar(); }} />}
     </div>
   );
 }

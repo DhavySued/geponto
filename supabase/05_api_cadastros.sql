@@ -23,10 +23,14 @@ begin
     'cargos',        coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
                                  from cargos where ativo), '[]'::jsonb),
     'jornadas',      coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
-                                 from jornadas where ativo), '[]'::jsonb),
+                                 from jornadas where ativo and fn_da_empresa(empresa_id, todas_empresas)), '[]'::jsonb),
     'perfis_eventos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome, 'padrao', padrao)
                                                  order by padrao desc, nome)
-                                  from perfis_eventos where ativo), '[]'::jsonb),
+                                  from perfis_eventos where ativo and (padrao or fn_da_empresa(empresa_id, todas_empresas))), '[]'::jsonb),
+    -- Próxima matrícula: a maior numérica + 1, com o mesmo número de dígitos
+    'proxima_matricula', (select lpad((coalesce(max(matricula::numeric), 0) + 1)::text,
+                                      greatest(coalesce(max(length(matricula)), 1), length((coalesce(max(matricula::numeric), 0) + 1)::text)), '0')
+                            from colaboradores where matricula ~ '^[0-9]{1,15}$'),
     'gestores',      coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
                                  from colaboradores where situacao <> 'desligado'), '[]'::jsonb)
   );
@@ -90,9 +94,10 @@ end $$;
 -- Situação do Colaborador
 -- -----------------------------------------------------------------------------
 -- Último dia de período fechado (as situações até ele ficam travadas)
-create or replace function fn_fechado_ate()
+drop function if exists fn_fechado_ate();
+create or replace function fn_fechado_ate(p_colaborador uuid default null)
 returns date language sql stable set search_path = public as $$
-  select max(data_fim) from fechamentos;
+  select max(data_fim) from fechamentos f where fn_fechamento_da_empresa(f.empresa_id, p_colaborador);
 $$;
 
 -- Situações (de um colaborador ou de uma lista), da mais recente para a mais antiga
@@ -114,7 +119,7 @@ returns jsonb language sql stable set search_path = public as $$
            'salario', s.salario, 'motivo', s.motivo, 'primeira', s.primeira,
            'vigente', s.data_inicio <= fn_hoje() and (s.data_fim is null or s.data_fim >= fn_hoje()),
            'futura', s.data_inicio > fn_hoje(),
-           'fechado', s.data_inicio <= coalesce(fn_fechado_ate(), '-infinity'::date),
+           'fechado', s.data_inicio <= coalesce(fn_fechado_ate(s.colaborador_id), '-infinity'::date),
            'usuario', u.nome, 'alterado_por', u2.nome, 'created_at', s.created_at, 'updated_at', s.updated_at)
          order by c.nome, s.data_inicio desc), '[]'::jsonb)
     from s
@@ -147,10 +152,10 @@ begin
     'departamentos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
                                  from departamentos where ativo), '[]'::jsonb),
     'jornadas', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
-                            from jornadas where ativo), '[]'::jsonb),
+                            from jornadas where ativo and fn_da_empresa(empresa_id, todas_empresas)), '[]'::jsonb),
     'perfis_eventos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome, 'padrao', padrao)
                                                  order by padrao desc, nome)
-                                  from perfis_eventos where ativo), '[]'::jsonb));
+                                  from perfis_eventos where ativo and (padrao or fn_da_empresa(empresa_id, todas_empresas))), '[]'::jsonb));
 end $$;
 
 -- Inclui ou altera uma situação. Vale da data informada até a véspera da seguinte.
@@ -164,7 +169,7 @@ declare
   v_data date;
   v_adm date;
   v_primeira date;
-  v_fechado date := fn_fechado_ate();
+  v_fechado date;
   v_perfil uuid;
   v_jornada uuid := fn_txt(d, 'jornada_id')::uuid;
   v_usuario uuid := nullif(current_setting('app.usuario_id', true), '')::uuid;
@@ -184,9 +189,14 @@ begin
     raise exception 'O desligamento não é uma situação: informe a data de desligamento no cadastro do colaborador.';
   end if;
   v_data := fn_txt(d, 'data_inicio')::date;
+  v_fechado := fn_fechado_ate(v_colab);
 
   select data_admissao into v_adm from colaboradores where id = v_colab;
   select min(data_inicio) into v_primeira from colaborador_situacoes where colaborador_id = v_colab;
+  -- A situação da admissão é mantida pelo cadastro do colaborador
+  if v_id is not null and v_old.data_inicio = v_primeira then
+    raise exception 'Esta é a situação da admissão. Para alterá-la, altere no cadastro do colaborador (aba Profissional, dados da admissão).';
+  end if;
   if v_data < v_adm then
     raise exception 'A situação não pode começar antes da admissão (%).', to_char(v_adm, 'DD/MM/YYYY');
   end if;
@@ -245,7 +255,7 @@ create or replace function api_colaborador_situacao_excluir(p_token text, p_id u
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
   v_old colaborador_situacoes%rowtype;
-  v_fechado date := fn_fechado_ate();
+  v_fechado date;
 begin
   perform fn_auth(p_token, 'situacoes_colaborador', true);
   select * into v_old from colaborador_situacoes where id = p_id;
@@ -253,8 +263,9 @@ begin
   if not fn_visivel(v_old.colaborador_id) then
     raise exception 'Colaborador fora da sua abrangência de acesso.' using errcode = '42501';
   end if;
+  v_fechado := fn_fechado_ate(v_old.colaborador_id);
   if v_old.data_inicio = (select min(data_inicio) from colaborador_situacoes where colaborador_id = v_old.colaborador_id) then
-    raise exception 'A situação da admissão não pode ser excluída. Altere-a, se precisar.';
+    raise exception 'A situação da admissão não pode ser excluída. Para alterá-la, altere no cadastro do colaborador.';
   end if;
   if v_fechado is not null and v_old.data_inicio <= v_fechado then
     raise exception 'O período até % está fechado. Reabra o fechamento para excluir esta situação.', to_char(v_fechado, 'DD/MM/YYYY');
@@ -324,6 +335,12 @@ begin
   end if;
 
   if fn_txt(d, 'nome') is null then raise exception 'Informe o nome do colaborador.'; end if;
+  if fn_txt(d, 'matricula') is null and nullif(d ->> 'id', '') is null then
+    d := d || jsonb_build_object('matricula', (
+      select lpad((coalesce(max(matricula::numeric), 0) + 1)::text,
+                  greatest(coalesce(max(length(matricula)), 1), length((coalesce(max(matricula::numeric), 0) + 1)::text)), '0')
+        from colaboradores where matricula ~ '^[0-9]{1,15}$'));
+  end if;
   if fn_txt(d, 'matricula') is null then raise exception 'Informe a matrícula.'; end if;
   if length(regexp_replace(coalesce(d ->> 'cpf', ''), '[^0-9]', '', 'g')) <> 11 then
     raise exception 'Informe um CPF válido (11 dígitos).';
@@ -427,6 +444,47 @@ begin
       controle_ponto_inicio = v_controle,
       empresa_id = coalesce(fn_txt(d, 'empresa_id')::uuid, empresa_id)
     where id = v_id;
+
+    -- Dados da admissão (a primeira situação): só mudam aqui, no cadastro
+    if jsonb_typeof(d -> 'admissao') = 'object' then
+      declare
+        a jsonb := d -> 'admissao';
+        s colaborador_situacoes%rowtype;
+        n_sit situacao_colaborador;
+        n_jor uuid := fn_txt(a, 'jornada_id')::uuid;
+        n_per uuid;
+        n_sal numeric := fn_txt(a, 'salario')::numeric;
+      begin
+        select * into s from colaborador_situacoes where colaborador_id = v_id order by data_inicio limit 1;
+        if found then
+          if fn_txt(a, 'situacao') = 'desligado' then
+            raise exception 'O desligamento não é uma situação: informe a data de desligamento.';
+          end if;
+          n_sit := coalesce(fn_txt(a, 'situacao'), s.situacao::text)::situacao_colaborador;
+          n_per := coalesce(fn_txt(a, 'perfil_evento_id')::uuid, s.perfil_evento_id);
+          if (s.situacao, s.cargo_id, s.departamento_id, s.jornada_id, s.perfil_evento_id, s.salario)
+             is distinct from (n_sit, fn_txt(a, 'cargo_id')::uuid, fn_txt(a, 'departamento_id')::uuid, n_jor, n_per, n_sal) then
+            if s.data_inicio <= coalesce(fn_fechado_ate(v_id), '-infinity'::date) then
+              raise exception 'A admissão está em um período fechado. Reabra o fechamento para alterar os dados da admissão.';
+            end if;
+            if n_jor is not null and n_jor is distinct from s.jornada_id
+               and not exists (select 1 from jornadas where id = n_jor and ativo) then
+              raise exception 'Escolha uma jornada ativa.';
+            end if;
+            if n_per is distinct from s.perfil_evento_id
+               and not exists (select 1 from perfis_eventos where id = n_per and ativo) then
+              raise exception 'Escolha uma regra de cálculo ativa.';
+            end if;
+            perform set_config('app.data_vigencia', s.data_inicio::text, true);
+            update colaborador_situacoes set
+              situacao = n_sit, cargo_id = fn_txt(a, 'cargo_id')::uuid,
+              departamento_id = fn_txt(a, 'departamento_id')::uuid,
+              jornada_id = n_jor, perfil_evento_id = n_per, salario = n_sal
+             where id = s.id;
+          end if;
+        end if;
+      end;
+    end if;
     perform fn_colaborador_situacao_aplicar(v_id);
   end if;
 
@@ -577,6 +635,7 @@ begin
                        from jornada_dias jd where jd.jornada_id = j.id), '[]'::jsonb))
              order by j.ativo desc, j.nome)
       from jornadas j
+     where fn_da_empresa(j.empresa_id, j.todas_empresas)
   ), '[]'::jsonb);
 end $$;
 
@@ -636,12 +695,15 @@ begin
   end loop;
 
   if v_id is null then
-    insert into jornadas (nome, descricao, ativo, tipo, ciclo_dias, data_base, intervalo_flexivel)
+    insert into jornadas (nome, descricao, ativo, tipo, ciclo_dias, data_base, intervalo_flexivel,
+                          empresa_id, todas_empresas, intervalo_pre_assinalado)
     values (fn_txt(d, 'nome'), fn_txt(d, 'descricao'),
             coalesce((d ->> 'ativo')::boolean, true),
             v_tipo, case when v_tipo = 'escala' then v_ciclo end,
             case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end,
-            coalesce((d ->> 'intervalo_flexivel')::boolean, false))
+            coalesce((d ->> 'intervalo_flexivel')::boolean, false),
+            fn_empresa_atual(), coalesce((d ->> 'todas_empresas')::boolean, false),
+            coalesce((d ->> 'intervalo_pre_assinalado')::boolean, false))
     returning id into v_id;
   else
     update jornadas set
@@ -650,7 +712,10 @@ begin
       tipo = v_tipo,
       ciclo_dias = case when v_tipo = 'escala' then v_ciclo end,
       data_base = case when v_tipo = 'escala' then fn_txt(d, 'data_base')::date end,
-      intervalo_flexivel = coalesce((d ->> 'intervalo_flexivel')::boolean, false)
+      intervalo_flexivel = coalesce((d ->> 'intervalo_flexivel')::boolean, false),
+      todas_empresas = coalesce((d ->> 'todas_empresas')::boolean, todas_empresas),
+      intervalo_pre_assinalado = coalesce((d ->> 'intervalo_pre_assinalado')::boolean, false),
+      empresa_id = coalesce(empresa_id, fn_empresa_atual())
     where id = v_id;
     if not found then raise exception 'Jornada não encontrada.'; end if;
     delete from jornada_dias where jornada_id = v_id;
@@ -719,6 +784,7 @@ begin
                                      where c.perfil_evento_id = p.id and c.situacao <> 'desligado'))
              order by p.ativo desc, p.padrao desc, p.nome)
       from perfis_eventos p
+     where p.padrao or fn_da_empresa(p.empresa_id, p.todas_empresas)
   ), '[]'::jsonb);
 end $$;
 
@@ -759,7 +825,7 @@ begin
   end if;
 
   if v_id is null then
-    insert into perfis_eventos (nome, descricao, padrao, ativo) values (fn_txt(d, 'nome'), fn_txt(d, 'descricao'), v_padrao, v_ativo)
+    insert into perfis_eventos (nome, descricao, padrao, ativo, empresa_id) values (fn_txt(d, 'nome'), fn_txt(d, 'descricao'), v_padrao, v_ativo, fn_empresa_atual())
     returning id into v_id;
   else
     if v_era_padrao is null then raise exception 'Perfil não encontrado.'; end if;
@@ -770,6 +836,8 @@ begin
 
   update perfis_eventos set
     nome = fn_txt(d, 'nome'), descricao = fn_txt(d, 'descricao'), padrao = v_padrao, ativo = v_ativo,
+    todas_empresas         = coalesce((d ->> 'todas_empresas')::boolean, todas_empresas),
+    empresa_id             = coalesce(empresa_id, fn_empresa_atual()),
     tolerancia_entrada_min = coalesce(fn_txt(d, 'tolerancia_entrada_min')::smallint, 5),
     tolerancia_saida_min   = coalesce(fn_txt(d, 'tolerancia_saida_min')::smallint, 5),
     tolerancia_diaria_min  = coalesce(fn_txt(d, 'tolerancia_diaria_min')::smallint, 10),
@@ -847,7 +915,7 @@ grant execute on function api_colaborador_local_salvar(text, uuid, jsonb)  to an
 grant execute on function api_colaborador_situacao_salvar(text, jsonb)     to anon, authenticated;
 grant execute on function api_colaborador_situacao_excluir(text, uuid)     to anon, authenticated;
 revoke execute on function fn_situacoes_json(uuid, uuid[])                 from public, anon, authenticated;
-revoke execute on function fn_fechado_ate()                                from public, anon, authenticated;
+revoke execute on function fn_fechado_ate(uuid)                            from public, anon, authenticated;
 revoke execute on function fn_perfil_vigente(uuid, date)                   from public, anon, authenticated;
 revoke execute on function fn_colaborador_situacao_aplicar(uuid)           from public, anon, authenticated;
 grant execute on function api_perfil_evento_salvar(text, jsonb)  to anon, authenticated;

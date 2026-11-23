@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { useAuth } from '@/contexts/AuthContext';
 import { formatData, toISODate } from '@/lib/format';
 import { localizarEndereco } from '@/lib/enderecos';
 import { linkMapa, obterLocalizacao, textoDistancia } from '@/lib/geo';
@@ -56,6 +55,16 @@ function doBanco(r: Record<string, unknown>): Colaborador {
   out.pis = mascaraPIS(String(out.pis));
   out.telefone = mascaraTelefone(String(out.telefone));
   out.cep = mascaraCEP(String(out.cep));
+  // Os campos profissionais mostram a situação da admissão (a primeira), que é editada aqui
+  const primeira = (r.situacoes as ColaboradorSituacao[] | undefined)?.find((s) => s.primeira);
+  if (primeira) {
+    out.situacao = primeira.situacao;
+    out.cargo_id = primeira.cargo_id ?? '';
+    out.departamento_id = primeira.departamento_id ?? '';
+    out.jornada_id = primeira.jornada_id ?? '';
+    out.perfil_evento_id = primeira.perfil_evento_id ?? '';
+    out.salario = primeira.salario == null ? '' : String(primeira.salario);
+  }
   return out as unknown as Colaborador;
 }
 
@@ -440,7 +449,6 @@ export function ColaboradorModal({
   onSalvo: () => void;
 }) {
   const toast = useToast();
-  const { usuario: usuarioLogado } = useAuth();
   const [aba, setAba] = useState<Aba>('pessoais');
   const [form, setForm] = useState<Colaborador>(vazio);
   const [aux, setAux] = useState<CadastrosAuxiliares | null>(null);
@@ -461,7 +469,7 @@ export function ColaboradorModal({
     ])
       .then(([a, c]) => {
         setAux(a);
-        const f = c ? doBanco(c) : vazio();
+        const f = c ? doBanco(c) : { ...vazio(), matricula: a.proxima_matricula ?? '' };
         setForm(f);
       })
       .catch((e) => setErro(e instanceof Error ? e.message : 'Erro ao carregar.'))
@@ -527,7 +535,11 @@ export function ColaboradorModal({
         : /^\d{1,3}(\.\d{3})+$/.test(form.salario)
           ? form.salario.replace(/\./g, '')
           : form.salario;
-      await api('api_colaborador_salvar', { p_dados: { ...dados, salario } });
+      const admissao = form.id ? {
+        situacao: form.situacao, cargo_id: form.cargo_id, departamento_id: form.departamento_id,
+        jornada_id: form.jornada_id, perfil_evento_id: form.perfil_evento_id, salario,
+      } : undefined;
+      await api('api_colaborador_salvar', { p_dados: { ...dados, salario, admissao } });
       toast(form.id ? 'Colaborador atualizado.' : 'Colaborador cadastrado.');
       onSalvo();
     } catch (e) {
@@ -595,7 +607,7 @@ export function ColaboradorModal({
               <Field label="Nome completo" obrigatorio className="sm:col-span-2">
                 <input className="input" value={form.nome} onChange={(e) => set('nome', e.target.value)} autoFocus />
               </Field>
-              <Field label="Matrícula" obrigatorio>
+              <Field label="Matrícula" obrigatorio dica={form.id ? undefined : 'Sugerida pela sequência. Pode alterar, se precisar.'}>
                 <input className="input" value={form.matricula} onChange={(e) => set('matricula', e.target.value)} />
               </Field>
               <Field label="Nome social">
@@ -654,13 +666,11 @@ export function ColaboradorModal({
                 />
                 {admissaoInvalida && <span className="mt-1 block text-[11px] font-medium text-rose-600">Campo obrigatório</span>}
               </Field>
-              {!form.id && (
-                <Field label="Situação">
-                  <select className="input" value={form.situacao} onChange={(e) => set('situacao', e.target.value as SituacaoColaborador)}>
-                    {(['ativo', 'ferias', 'afastado'] as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
-                  </select>
-                </Field>
-              )}
+              <Field label={form.id ? 'Situação na admissão' : 'Situação'}>
+                <select className="input" value={form.situacao} onChange={(e) => set('situacao', e.target.value as SituacaoColaborador)}>
+                  {(['ativo', 'ferias', 'afastado'] as SituacaoColaborador[]).map((s) => <option key={s} value={s}>{SITUACAO[s].label}</option>)}
+                </select>
+              </Field>
 
               {/* Controle de ponto */}
               <div className="rounded-xl p-3 ring-1 ring-slate-200/80 sm:col-span-2">
@@ -685,20 +695,18 @@ export function ColaboradorModal({
                 </div>
               </div>
 
-              {(usuarioLogado?.empresas.length ?? 0) > 1 && (
-                <Field label="Empresa" obrigatorio dica="O colaborador aparece só quando o usuário entra nesta empresa.">
-                  <select className="input" value={form.empresa_id || usuarioLogado?.empresa?.id || ''} onChange={(e) => set('empresa_id', e.target.value)}>
-                    {usuarioLogado?.empresas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
-                  </select>
-                </Field>
-              )}
-              {form.id ? (
-                <Situacoes colaboradorId={form.id} itens={form.situacoes ?? []} onFechar={onFechar} />
-              ) : (
+              {form.id && <Situacoes colaboradorId={form.id} itens={form.situacoes ?? []} onFechar={onFechar} />}
+              {(() => {
+                const primeira = form.situacoes?.find((s) => s.primeira);
+                return (
                 <>
                 <p className="rounded-xl bg-primary-50/60 p-3 text-xs text-primary-900 sm:col-span-2">
-                  Situação, cargo, departamento, jornada, regra de cálculo e salário viram a <strong>primeira situação</strong>,
-                  na data da admissão. Depois, as mudanças são lançadas na Situação do Colaborador, a partir de uma data.
+                  {form.id ? (
+                    <>Dados da <strong>admissão</strong> (a primeira situação). Eles são alterados só aqui; as mudanças seguintes são lançadas na Situação do Colaborador, a partir de uma data.</>
+                  ) : (
+                    <>Situação, cargo, departamento, jornada, regra de cálculo e salário viram a <strong>primeira situação</strong>,
+                    na data da admissão. Depois, as mudanças são lançadas na Situação do Colaborador, a partir de uma data.</>
+                  )}
                 </p>
                 <SelectComCriacao label="Cargo" valor={form.cargo_id} opcoes={aux.cargos}
                   onChange={(v) => set('cargo_id', v)} onCriar={criarAuxiliar('cargos', 'cargo_id')} />
@@ -712,6 +720,9 @@ export function ColaboradorModal({
                 >
                   <select className="input" value={form.jornada_id} onChange={(e) => set('jornada_id', e.target.value)}>
                     <option value="">Selecione…</option>
+                    {primeira?.jornada_id && !aux.jornadas.some((o) => o.id === primeira.jornada_id) && (
+                      <option value={primeira.jornada_id}>{primeira.jornada}</option>
+                    )}
                     {aux.jornadas.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
                   </select>
                 </Field>
@@ -725,6 +736,9 @@ export function ColaboradorModal({
                         Regra padrão{perfisEventos.find((p) => p.padrao) ? ` (${perfisEventos.find((p) => p.padrao)!.nome})` : ''}
                       </option>
                     )}
+                    {primeira?.perfil_evento_id && !perfisEventos.some((o) => o.id === primeira.perfil_evento_id) && (
+                      <option value={primeira.perfil_evento_id}>{primeira.perfil_evento}</option>
+                    )}
                     {perfisEventos.map((o) => <option key={o.id} value={o.id}>{o.nome}{o.padrao ? ' · padrão' : ''}</option>)}
                   </select>
                 </Field>
@@ -733,7 +747,8 @@ export function ColaboradorModal({
                     onChange={(e) => set('salario', e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" />
                 </Field>
                 </>
-              )}
+                );
+              })()}
               <Field label="Data de desligamento" dica="Último dia apurado; depois dele o colaborador fica desligado. Em branco: ativo.">
                 <input type="date" className="input" value={form.data_desligamento} min={form.data_admissao || undefined}
                   onChange={(e) => set('data_desligamento', e.target.value)} />

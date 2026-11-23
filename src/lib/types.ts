@@ -15,6 +15,13 @@ export type PaginaChave =
   | 'espelho_ponto'
   | 'feriados'
   | 'ocorrencias'
+  | 'afastamentos'
+  | 'tipos_licenca'
+  | 'motivos_batida'
+  | 'afd'
+  | 'relatorio_noturno'
+  | 'relatorio_folgas'
+  | 'config_dashboard'
   | 'justificativas'
   | 'solicitacoes'
   | 'fechamento'
@@ -215,6 +222,8 @@ export interface CadastrosAuxiliares {
   jornadas: Opcao[];
   perfis_eventos: (Opcao & { padrao: boolean })[];
   gestores: Opcao[];
+  /** Próxima matrícula da sequência (sugerida no cadastro) */
+  proxima_matricula: string | null;
 }
 
 export interface ColaboradorResumo {
@@ -374,6 +383,10 @@ export interface Jornada {
   ativo: boolean;
   /** A saída e o retorno do intervalo não precisam bater no horário: vale a duração do intervalo */
   intervalo_flexivel: boolean;
+  /** Intervalo pré-assinalado (Portaria 671): sem as batidas do intervalo, vale o previsto */
+  intervalo_pre_assinalado: boolean;
+  /** Aparece em todas as empresas (senão, só na empresa em que foi criada) */
+  todas_empresas: boolean;
   colaboradores?: number;
   minutos_semana?: number;
   dias: JornadaDia[];
@@ -391,6 +404,8 @@ export interface PerfilEvento {
   nome: string;
   descricao: string | null;
   padrao: boolean;
+  /** Aparece em todas as empresas (senão, só na empresa em que foi criada) */
+  todas_empresas: boolean;
   tolerancia_entrada_min: number;
   tolerancia_saida_min: number;
   tolerancia_diaria_min: number;
@@ -864,6 +879,14 @@ export interface Ocorrencia {
   usuario: string | null;
   created_at: string;
   fechado: boolean;
+  licenca_id: string | null;
+  licenca: string | null;
+}
+
+export interface TipoLicencaOpcao {
+  id: string;
+  descricao: string;
+  abona: boolean;
 }
 
 export type TipoSolicitacao = 'inclusao_batida' | 'abono';
@@ -941,6 +964,8 @@ export interface EspelhoDia {
   ocorrencia: string;
   observacao: string | null;
   batidas: BatidaTratamento[];
+  /** Intervalo pré-assinalado (Portaria 671): saída e retorno do intervalo previstos, não batidos */
+  pre_assinalado?: boolean;
 }
 
 export interface EspelhoColaborador {
@@ -1185,7 +1210,14 @@ export interface Escala extends HorarioDia {
 }
 
 /** Escala lançada: o registro com nome, período, dias da semana, horários e colaboradores */
+/** Horário próprio de um dia da escala (os dias sem ajuste seguem o horário da escala) */
+export interface HorarioEscalaDia extends HorarioDia {
+  tipo: TipoEscala;
+}
+
 export interface EscalaLancamento extends HorarioDia {
+  /** Horário próprio por dia: chave AAAA-MM-DD */
+  horarios: Record<string, HorarioEscalaDia>;
   id: string;
   nome: string;
   tipo: TipoEscala;
@@ -1316,6 +1348,41 @@ export interface RelatorioEscalasItem {
 export interface RelatorioEscalas {
   periodo: { inicio: string; fim: string };
   itens: RelatorioEscalasItem[];
+}
+
+export interface RelatorioNoturnoItem {
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
+  departamento: string | null;
+  data: string;
+  horario: string | null;
+  trabalhado_min: number;
+  noturno_min: number;
+  noturno_reduzido_min: number;
+  percentual: number;
+  faixa: string;
+  reduzida: boolean;
+}
+
+export interface RelatorioFolgasItem {
+  colaborador_id: string;
+  colaborador: string;
+  matricula: string;
+  departamento: string | null;
+  data: string;
+  origem: 'jornada' | 'escala' | 'ocorrencia';
+  feriado: string | null;
+  trabalhou: boolean;
+  trabalhado_min: number;
+  extra_min: number;
+  he_percentual: number;
+  realizado: boolean;
+}
+
+export interface RelatorioPeriodo<T> {
+  periodo: { inicio: string; fim: string };
+  itens: T[];
 }
 
 export type AcaoAuditoria = 'inclusao' | 'alteracao' | 'exclusao' | 'login' | 'login_falha';

@@ -12,7 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatData, parseISODate, toISODate } from '@/lib/format';
 import { useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { api } from '@/lib/api';
-import type { EscalaColaborador, EscalaDia, EscalaLancamento, EscalasGrade, EscalasLancamentos, FiltrosAux, HorarioDia, TipoEscala } from '@/lib/types';
+import type { EscalaColaborador, EscalaDia, EscalaLancamento, EscalasGrade, EscalasLancamentos, FiltrosAux, HorarioDia, HorarioEscalaDia, TipoEscala } from '@/lib/types';
 
 /** Período máximo de uma escala (dias corridos) */
 const MAX_DIAS = 30;
@@ -55,6 +55,18 @@ interface FormEscala extends HorarioDia {
   ini: string;
   fim: string;
   diasSemana: number[];
+  /** Dias com horário próprio (AAAA-MM-DD) */
+  horarios: Record<string, HorarioEscalaDia>;
+}
+
+/** Datas do período que caem nos dias da semana marcados */
+function datasDaEscala(ini: string, fim: string, diasSemana: number[]): string[] {
+  if (!ini || !fim || fim < ini) return [];
+  const out: string[] = [];
+  for (let d = parseISODate(ini); toISODate(d) <= fim && out.length <= 62; d.setDate(d.getDate() + 1)) {
+    if (diasSemana.includes(d.getDay())) out.push(toISODate(d));
+  }
+  return out;
 }
 
 /** Valores para abrir uma escala nova já preenchida (ex.: dias selecionados na grade) */
@@ -65,6 +77,7 @@ function formVazio(prefill: Prefill = {}): FormEscala {
   return {
     nome: '', tipo: 'trabalho', observacao: '', colaboradores: prefill.colaboradores ?? [],
     ini: prefill.ini ?? hoje, fim: prefill.fim ?? hoje, diasSemana: prefill.diasSemana ?? TODOS_DIAS,
+    horarios: {},
     ...(prefill.horario ?? HORARIO_VAZIO),
   };
 }
@@ -99,7 +112,7 @@ function EscalaModal({
             nome: escala.nome, tipo: escala.tipo, observacao: escala.observacao ?? '',
             colaboradores: escala.colaboradores.map((c) => c.id), ini: escala.data_inicio, fim: escala.data_fim,
             diasSemana: escala.dias_semana, entrada: escala.entrada, saida_intervalo: escala.saida_intervalo,
-            retorno_intervalo: escala.retorno_intervalo, saida: escala.saida,
+            retorno_intervalo: escala.retorno_intervalo, saida: escala.saida, horarios: escala.horarios ?? {},
           }
         : formVazio(prefill),
     );
@@ -113,6 +126,18 @@ function EscalaModal({
     [aux, form.colaboradores],
   );
   const somenteLeitura = !!escala?.fechado;
+  const datas = useMemo(() => datasDaEscala(form.ini, form.fim, form.diasSemana), [form.ini, form.fim, form.diasSemana]);
+  const qtdPersonalizados = datas.filter((d) => form.horarios[d]).length;
+  const [porDia, setPorDia] = useState(false);
+  useEffect(() => { if (aberto) setPorDia(!!escala && Object.keys(escala.horarios ?? {}).length > 0); }, [aberto, escala]);
+  const padrao = (): HorarioEscalaDia => ({
+    tipo: form.tipo, entrada: form.entrada, saida_intervalo: form.saida_intervalo, retorno_intervalo: form.retorno_intervalo, saida: form.saida,
+  });
+  const doDia = (d: string): HorarioEscalaDia => form.horarios[d] ?? padrao();
+  const mudarDia = (d: string, patch: Partial<HorarioEscalaDia>) =>
+    setForm((f) => ({ ...f, horarios: { ...f.horarios, [d]: { ...(f.horarios[d] ?? padrao()), ...patch } } }));
+  const restaurarDia = (d: string) =>
+    setForm((f) => { const h = { ...f.horarios }; delete h[d]; return { ...f, horarios: h }; });
 
   const salvar = async () => {
     setErro(null);
@@ -134,6 +159,8 @@ function EscalaModal({
           retorno_intervalo: form.tipo === 'trabalho' ? form.retorno_intervalo : null,
           saida: form.tipo === 'trabalho' ? form.saida : null,
           observacao: form.observacao,
+          // Só os dias do período atual
+          horarios: Object.fromEntries(datas.filter((d) => form.horarios[d]).map((d) => [d, form.horarios[d]])),
         },
       });
       toast(escala ? `Escala alterada (${r.dias} dia(s)).` : `Escala "${form.nome.trim()}" lançada em ${r.dias} dia(s).`);
@@ -155,7 +182,7 @@ function EscalaModal({
     <Modal
       aberto={aberto}
       onFechar={onFechar}
-      largura="max-w-2xl"
+      largura="max-w-3xl"
       titulo={escala ? 'Escala' : 'Nova escala'}
       descricao="A escala substitui o padrão da jornada nos dias escolhidos e fica registrada para consultar e alterar depois."
       rodape={
@@ -229,6 +256,76 @@ function EscalaModal({
             {hora('saida_intervalo', 'Saída interv.')}
             {hora('retorno_intervalo', 'Retorno')}
             {hora('saida', 'Saída', true)}
+          </div>
+        )}
+
+        {datas.length > 0 && (
+          <div className="rounded-xl ring-1 ring-slate-200/80">
+            <button type="button" onClick={() => setPorDia((v) => !v)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+              <span>
+                <span className="block text-sm font-medium text-slate-800">Horário de cada dia</span>
+                <span className="block text-xs text-slate-500">
+                  {qtdPersonalizados
+                    ? `${qtdPersonalizados} de ${datas.length} dia(s) com horário próprio; os demais seguem o horário acima.`
+                    : 'Todos os dias seguem o horário acima. Abra para mudar o horário (ou dar folga) em dias específicos.'}
+                </span>
+              </span>
+              <span className="text-xs font-medium text-primary-600">{porDia ? 'Recolher' : 'Personalizar'}</span>
+            </button>
+            {porDia && (
+              <div className="max-h-[360px] overflow-y-auto border-t border-slate-100">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-50 text-left text-xs text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Dia</th>
+                      <th className="px-2 py-2 font-medium">Trabalha</th>
+                      <th className="px-2 py-2 font-medium">Entrada</th>
+                      <th className="px-2 py-2 font-medium">Saída interv.</th>
+                      <th className="px-2 py-2 font-medium">Retorno</th>
+                      <th className="px-2 py-2 font-medium">Saída</th>
+                      <th className="px-2 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datas.map((d) => {
+                      const h = doDia(d);
+                      const proprio = !!form.horarios[d];
+                      const campo = (k: keyof HorarioDia) => (
+                        <td className="px-1 py-1.5">
+                          <input type="time" className="input h-8 px-1.5 text-xs" disabled={somenteLeitura || h.tipo === 'folga'}
+                            value={h.tipo === 'folga' ? '' : h[k] ?? ''} onChange={(e) => mudarDia(d, { [k]: e.target.value || null })} />
+                        </td>
+                      );
+                      return (
+                        <tr key={d} className={clsx(proprio && 'bg-primary-50/40')}>
+                          <td className="whitespace-nowrap px-3 py-1.5 text-xs capitalize text-slate-700">
+                            {formatData(d, { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input type="checkbox" className="h-4 w-4 accent-primary-600" disabled={somenteLeitura} checked={h.tipo === 'trabalho'}
+                              onChange={(e) => mudarDia(d, e.target.checked
+                                ? { tipo: 'trabalho', entrada: h.entrada ?? form.entrada, saida_intervalo: h.saida_intervalo ?? form.saida_intervalo,
+                                    retorno_intervalo: h.retorno_intervalo ?? form.retorno_intervalo, saida: h.saida ?? form.saida }
+                                : { tipo: 'folga' })} />
+                          </td>
+                          {campo('entrada')}
+                          {campo('saida_intervalo')}
+                          {campo('retorno_intervalo')}
+                          {campo('saida')}
+                          <td className="px-2 py-1.5 text-right">
+                            {proprio && !somenteLeitura && (
+                              <button type="button" onClick={() => restaurarDia(d)} className="text-[11px] text-slate-400 hover:text-primary-600"
+                                title="Voltar ao horário da escala">padrão</button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

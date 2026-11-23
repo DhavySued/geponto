@@ -73,11 +73,16 @@ function GrupoMenu({
   aberto,
   onAbrir,
   onFechar,
+  onClicar,
+  onNavegar,
 }: {
   grupo: NavGroup;
   aberto: boolean;
   onAbrir: () => void;
   onFechar: () => void;
+  /** Clique no grupo: fixa o menu aberto (ou fecha, se já estava fixado) */
+  onClicar: () => void;
+  onNavegar: () => void;
 }) {
   const { pathname } = useLocation();
   const [sub, setSub] = useState<string | null>(null);
@@ -112,7 +117,7 @@ function GrupoMenu({
     <div className="relative" onMouseEnter={onAbrir} onMouseLeave={onFechar}>
       <button
         type="button"
-        onClick={() => (aberto ? onFechar() : onAbrir())}
+        onClick={onClicar}
         aria-expanded={aberto}
         className={clsx(
           'flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium transition',
@@ -131,7 +136,7 @@ function GrupoMenu({
             {lista.map((e) =>
               e.tipo === 'item' ? (
                 <div key={e.item.chave} onMouseEnter={() => setSub(null)}>
-                  <LinkItem item={e.item} onNavegar={onFechar} />
+                  <LinkItem item={e.item} onNavegar={onNavegar} />
                 </div>
               ) : (
                 <div key={e.nome} className="relative" onMouseEnter={() => setSub(e.nome)}>
@@ -139,13 +144,13 @@ function GrupoMenu({
                     nome={e.nome}
                     aberto={sub === e.nome}
                     ativo={e.itens.some((i) => ativo(pathname, i.path))}
-                    onClick={() => setSub((s) => (s === e.nome ? null : e.nome))}
+                    onClick={() => setSub(e.nome)}
                   />
                   {sub === e.nome && (
                     <div className="absolute left-full top-0 z-50 pl-2">
                       <div className="w-72 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-slate-200/70">
                         {e.itens.map((i) => (
-                          <LinkItem key={i.chave} item={i} onNavegar={onFechar} />
+                          <LinkItem key={i.chave} item={i} onNavegar={onNavegar} />
                         ))}
                       </div>
                     </div>
@@ -299,6 +304,9 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
   const { usuario, pode, sair, trocarEmpresa } = useAuth();
   const { pathname } = useLocation();
   const [grupoAberto, setGrupoAberto] = useState<string | null>(null);
+  // Grupo aberto por clique: fica aberto mesmo com o mouse fora, até clicar fora, Esc ou escolher um item
+  const [fixado, setFixado] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement>(null);
   const [movelAberto, setMovelAberto] = useState(false);
   const [contaAberta, setContaAberta] = useState(false);
   const fechar = useRef<number>();
@@ -312,6 +320,7 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
 
   useEffect(() => {
     setGrupoAberto(null);
+    setFixado(null);
     setMovelAberto(false);
     setContaAberta(false);
   }, [pathname]);
@@ -320,11 +329,16 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setGrupoAberto(null);
+        setFixado(null);
         setContaAberta(false);
       }
     };
     const onClick = (e: MouseEvent) => {
       if (contaRef.current && !contaRef.current.contains(e.target as Node)) setContaAberta(false);
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setFixado(null);
+        setGrupoAberto(null);
+      }
     };
     document.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onClick);
@@ -341,7 +355,23 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
   };
   const agendarFechar = () => {
     window.clearTimeout(fechar.current);
-    fechar.current = window.setTimeout(() => setGrupoAberto(null), 180);
+    fechar.current = window.setTimeout(() => setGrupoAberto((g) => (fixadoRef.current && g === fixadoRef.current ? g : null)), 180);
+  };
+  const fixadoRef = useRef<string | null>(null);
+  fixadoRef.current = fixado;
+  const clicar = (titulo: string) => {
+    window.clearTimeout(fechar.current);
+    if (fixado === titulo) {
+      setFixado(null);
+      setGrupoAberto(null);
+    } else {
+      setFixado(titulo);
+      setGrupoAberto(titulo);
+    }
+  };
+  const navegar = () => {
+    setFixado(null);
+    setGrupoAberto(null);
   };
 
   const hoje = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
@@ -364,14 +394,16 @@ export function MenuSuperior({ onAlterarSenha }: { onAlterarSenha: () => void })
 
         <Logo />
 
-        <nav className="ml-4 hidden flex-1 items-center gap-1 lg:flex" aria-label="Menu principal">
+        <nav ref={navRef} className="ml-4 hidden flex-1 items-center gap-1 lg:flex" aria-label="Menu principal">
           {grupos.map((g) => (
             <GrupoMenu
               key={g.titulo}
               grupo={g}
               aberto={grupoAberto === g.titulo}
-              onAbrir={() => abrir(g.titulo)}
+              onAbrir={() => { if (!fixado || fixado === g.titulo) abrir(g.titulo); }}
               onFechar={agendarFechar}
+              onClicar={() => clicar(g.titulo)}
+              onNavegar={navegar}
             />
           ))}
         </nav>

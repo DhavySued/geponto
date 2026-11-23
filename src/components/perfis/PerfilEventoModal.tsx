@@ -293,6 +293,12 @@ export function PerfilEventoModal({
             label="Regra ativa"
             descricao="Regras inativas não aparecem no cadastro de colaboradores."
           />
+          <Switch
+            ativo={form.todas_empresas || form.padrao}
+            onChange={(v) => set('todas_empresas', v)}
+            label="Mostrar em todas as empresas"
+            descricao={form.padrao ? 'A regra padrão aparece em todas as empresas.' : 'Desligado: a regra só aparece na empresa em que foi cadastrada.'}
+          />
         </div>
         {perfil?.padrao && (
           <p className="flex items-center gap-1.5 text-xs text-slate-500">

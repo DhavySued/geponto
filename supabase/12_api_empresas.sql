@@ -186,7 +186,31 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+
+-- Dashboard: indicadores e gráficos que aparecem na empresa da sessão
+create or replace function api_dashboard_config(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token);
+  return coalesce((select dashboard from empresas where id = fn_empresa_atual()), '{}'::jsonb);
+end $$;
+
+create or replace function api_dashboard_config_salvar(p_token text, p_config jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'config_dashboard', true);
+  if jsonb_typeof(p_config) <> 'object' then raise exception 'Configuração inválida.'; end if;
+  update empresas
+     set dashboard = (select coalesce(jsonb_object_agg(k, v), '{}'::jsonb)
+                        from jsonb_each(p_config) x(k, v) where jsonb_typeof(v) = 'boolean')
+   where id = fn_empresa_atual();
+  if not found then raise exception 'Entre em uma empresa para configurar o dashboard.'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
 grant execute on function api_empresas_listar(text)               to anon, authenticated;
+grant execute on function api_dashboard_config(text)                to anon, authenticated;
+grant execute on function api_dashboard_config_salvar(text, jsonb)  to anon, authenticated;
 grant execute on function api_empresa_salvar(text, jsonb)         to anon, authenticated;
 grant execute on function api_empresa_excluir(text, uuid)         to anon, authenticated;
 grant execute on function api_empresas_opcoes(text)               to anon, authenticated;

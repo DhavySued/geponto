@@ -134,7 +134,7 @@ begin
     'cargos',        coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
                                  from cargos), '[]'::jsonb),
     'jornadas',      coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
-                                 from jornadas), '[]'::jsonb),
+                                 from jornadas where fn_da_empresa(empresa_id, todas_empresas)), '[]'::jsonb),
     'motivos',       coalesce((select jsonb_agg(jsonb_build_object('id', id, 'descricao', descricao,
                                                                    'aplicacao', aplicacao) order by descricao)
                                  from motivos_batida where ativo), '[]'::jsonb));
@@ -401,6 +401,56 @@ end $$;
 -- Ações
 -- -----------------------------------------------------------------------------
 drop function if exists api_batida_incluir(text, uuid, date, text, uuid, text, date, text);
+-- Marcações previstas do dia (E1, S1, E2, S2) com a batida que já ocupa cada uma, e a sugestão
+-- para a inclusão: a primeira marcação prevista ainda sem batida. Intervalo flexível: o retorno
+-- previsto é a saída real para o intervalo + a duração do intervalo.
+create or replace function api_batida_sugestao(p_token text, p_colaborador uuid, p_data date)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_tz  text := fn_fuso();
+  jd    record;
+  v_prev jsonb := '[]'::jsonb;
+  v_sug  jsonb;
+  v_s1   time;
+  r      record;
+begin
+  perform fn_auth(p_token, 'lancamento_manual', true);
+  if p_colaborador is null or p_data is null then return jsonb_build_object('previstas', '[]'::jsonb, 'sugestao', null); end if;
+  perform fn_exigir_visivel(p_colaborador);
+  select * into jd from fn_jornada_dia(p_colaborador, p_data);
+  if not found or coalesce(jd.folga, true) or jd.entrada is null then
+    return jsonb_build_object('previstas', '[]'::jsonb, 'sugestao', null,
+                              'folga', coalesce(jd.folga, true));
+  end if;
+
+  drop table if exists pg_temp._sug_bat;
+  create temp table _sug_bat on commit drop as
+    select b.sentido, b.turno, to_char(b.data_hora at time zone v_tz, 'HH24:MI') as hora
+      from fn_batidas_periodo(p_data, p_data, p_colaborador) b
+     where b.status = 'valida' and b.data_referencia = p_data;
+  select min(hora)::time into v_s1 from _sug_bat where sentido = 'S' and turno = 1;
+
+  for r in
+    select v.o, v.s, v.t,
+           case when v.s = 'E' and v.t = 2 and jd.intervalo_flexivel and v_s1 is not null
+                then v_s1 + (jd.retorno_intervalo - jd.saida_intervalo) else v.h end as h
+      from (values (1, 'E', 1, jd.entrada),
+                   (2, 'S', 1, coalesce(jd.saida_intervalo, jd.saida)),
+                   (3, 'E', 2, jd.retorno_intervalo),
+                   (4, 'S', 2, case when jd.saida_intervalo is not null then jd.saida end)) v(o, s, t, h)
+     where v.h is not null
+     order by v.o
+  loop
+    v_prev := v_prev || jsonb_build_object(
+      'sigla', r.s || r.t, 'hora', to_char(r.h, 'HH24:MI'),
+      'batida', (select min(hora) from _sug_bat b where b.sentido = r.s and b.turno = r.t));
+    if v_sug is null and not exists (select 1 from _sug_bat b where b.sentido = r.s and b.turno = r.t) then
+      v_sug := jsonb_build_object('sigla', r.s || r.t, 'hora', to_char(r.h, 'HH24:MI'));
+    end if;
+  end loop;
+  return jsonb_build_object('previstas', v_prev, 'sugestao', v_sug, 'folga', false);
+end $$;
+
 create or replace function api_batida_incluir(
   p_token text, p_colaborador uuid, p_data date, p_hora text, p_motivo uuid,
   p_observacao text default null, p_data_referencia date default null, p_sentido text default null,
@@ -446,6 +496,103 @@ begin
 
   perform fn_batida_auditar(v_bat, 'inclusao', null, v_dh, p_motivo, nullif(trim(p_observacao), ''));
   return jsonb_build_object('id', v_bat.id);
+end $$;
+
+-- Inclusão de batidas em lote: para cada colaborador e dia do período sem nenhuma batida, inclui as
+-- marcações previstas da jornada (ou da escala do dia) com uma variação aleatória de até X minutos,
+-- para que as batidas não fiquem idênticas ao horário previsto. Pula folgas, feriados, dias com
+-- ocorrência/afastamento de dia inteiro, períodos fechados e horários futuros.
+-- p_dados: { colaboradores: [uuid], data_inicio, data_fim, variacao_min, motivo_id, observacao?, simular? }
+create or replace function api_batidas_lote(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d        jsonb := p_dados;
+  v_ini    date := fn_txt(d, 'data_inicio')::date;
+  v_fim    date := fn_txt(d, 'data_fim')::date;
+  v_var    integer := coalesce(fn_txt(d, 'variacao_min')::integer, 0);
+  v_motivo uuid := nullif(d ->> 'motivo_id', '')::uuid;
+  v_simular boolean := coalesce((d ->> 'simular')::boolean, false);
+  v_obs    text := nullif(trim(coalesce(d ->> 'observacao', '')), '');
+  v_txt    text;
+  v_colabs uuid[];
+  c        uuid;
+  v_dia    date;
+  jd       record;
+  m        record;
+  v_dh     timestamptz;
+  v_ant    timestamptz;
+  v_bat    batidas%rowtype;
+  v_dias   integer := 0;
+  v_qtd    integer := 0;
+  v_pulos  jsonb := jsonb_build_object('com_batidas', 0, 'sem_previsao', 0, 'feriado', 0, 'ausencia', 0, 'fechado', 0, 'futuro', 0);
+  v_motivo_pulo text;
+begin
+  perform fn_auth(p_token, 'lancamento_manual', true);
+  if v_ini is null or v_fim is null or v_fim < v_ini then raise exception 'Informe um período válido.'; end if;
+  if v_fim - v_ini > 30 then raise exception 'Selecione um período de até 31 dias.'; end if;
+  if v_fim >= fn_hoje() then v_fim := fn_hoje(); end if;
+  if v_var not between 0 and 30 then raise exception 'A variação deve ficar entre 0 e 30 minutos.'; end if;
+  v_txt := fn_motivo_valido(v_motivo, 'inclusao');
+  select array_agg(distinct x::uuid) into v_colabs
+    from jsonb_array_elements_text(case when jsonb_typeof(d -> 'colaboradores') = 'array' then d -> 'colaboradores' else '[]'::jsonb end) x;
+  if coalesce(array_length(v_colabs, 1), 0) = 0 then raise exception 'Selecione ao menos um colaborador.'; end if;
+  foreach c in array v_colabs loop perform fn_exigir_visivel(c); end loop;
+
+  foreach c in array v_colabs loop
+    for v_dia in select g::date from generate_series(v_ini, v_fim, interval '1 day') g loop
+      v_motivo_pulo := null;
+      select * into jd from fn_jornada_dia(c, v_dia);
+      if exists (select 1 from batidas b where b.colaborador_id = c and b.data_referencia = v_dia and b.status = 'valida') then
+        v_motivo_pulo := 'com_batidas';
+      elsif not found or coalesce(jd.folga, true) or jd.entrada is null or jd.saida is null then
+        v_motivo_pulo := 'sem_previsao';
+      elsif jd.escala is distinct from 'trabalho' and exists (select 1 from feriados f where f.data = v_dia) then
+        v_motivo_pulo := 'feriado';
+      elsif exists (select 1 from ausencias a where a.colaborador_id = c and v_dia between a.data_inicio and a.data_fim
+                       and a.minutos is null) then
+        v_motivo_pulo := 'ausencia';
+      elsif fn_periodo_fechado(v_dia, c) then
+        v_motivo_pulo := 'fechado';
+      elsif fn_data_hora_local(v_dia + case when jd.saida <= jd.entrada then 1 else 0 end, to_char(jd.saida, 'HH24:MI'))
+            + make_interval(mins => v_var) > now()
+            or exists (select 1 from colaboradores x where x.id = c
+                         and (v_dia < fn_inicio_controle(x) or (x.data_desligamento is not null and v_dia > x.data_desligamento))) then
+        v_motivo_pulo := 'futuro';
+      end if;
+      if v_motivo_pulo is not null then
+        v_pulos := jsonb_set(v_pulos, array[v_motivo_pulo], to_jsonb((v_pulos ->> v_motivo_pulo)::int + 1));
+        continue;
+      end if;
+
+      v_dias := v_dias + 1;
+      v_ant := null;
+      for m in
+        select v.o, v.s, v.t, v.h
+          from (values (1, 'E', 1, jd.entrada),
+                       (2, 'S', 1, coalesce(jd.saida_intervalo, jd.saida)),
+                       (3, 'E', 2, jd.retorno_intervalo),
+                       (4, 'S', 2, case when jd.saida_intervalo is not null then jd.saida end)) v(o, s, t, h)
+         where v.h is not null
+         order by v.o
+      loop
+        v_dh := fn_data_hora_local(v_dia + case when m.h < jd.entrada then 1 else 0 end, to_char(m.h, 'HH24:MI'))
+                + make_interval(mins => round((random() * 2 - 1) * v_var)::int);
+        -- Mantém a ordem das marcações (a variação não inverte saída e retorno)
+        if v_ant is not null and v_dh <= v_ant then v_dh := v_ant + interval '1 minute'; end if;
+        v_ant := v_dh;
+        v_qtd := v_qtd + 1;
+        if not v_simular then
+          insert into batidas (colaborador_id, data_hora, data_referencia, origem, justificativa,
+                               motivo_id, observacao, usuario_id)
+          values (c, v_dh, v_dia, 'manual', v_txt || ' — Inclusão em lote' || coalesce(' — ' || v_obs, ''),
+                  v_motivo, coalesce(v_obs, 'Inclusão em lote'), nullif(current_setting('app.usuario_id', true), '')::uuid)
+          returning * into v_bat;
+          perform fn_batida_auditar(v_bat, 'inclusao', null, v_dh, v_motivo, coalesce(v_obs, 'Inclusão em lote'));
+        end if;
+      end loop;
+    end loop;
+  end loop;
+  return jsonb_build_object('dias', v_dias, 'batidas', v_qtd, 'pulados', v_pulos, 'simulado', v_simular);
 end $$;
 
 create or replace function api_batida_editar(
@@ -631,6 +778,8 @@ grant execute on function api_tratamento_batidas(text, date, date, uuid, uuid, t
 grant execute on function api_consulta_batidas(text, date, date, uuid, uuid, uuid, uuid, uuid[])    to anon, authenticated;
 grant execute on function api_batida_historico(text, uuid)                                  to anon, authenticated;
 grant execute on function api_batida_incluir(text, uuid, date, text, uuid, text, date, text, integer) to anon, authenticated;
+grant execute on function api_batida_sugestao(text, uuid, date) to anon, authenticated;
+grant execute on function api_batidas_lote(text, jsonb)          to anon, authenticated;
 grant execute on function api_batida_classificar(text, uuid, text, integer)                  to anon, authenticated;
 grant execute on function api_batida_editar(text, uuid, date, text, uuid, text)             to anon, authenticated;
 grant execute on function api_batida_excluir(text, uuid, text)                              to anon, authenticated;

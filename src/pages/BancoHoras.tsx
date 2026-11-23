@@ -232,6 +232,7 @@ function FiltroModal({
       aberto={aberto}
       onFechar={onFechar}
       titulo="Consultar banco de horas"
+      largura="max-w-3xl"
       descricao="Escolha o período e o colaborador (ou todos)."
       rodape={
         <div className="flex justify-end gap-2">
@@ -243,7 +244,7 @@ function FiltroModal({
       }
     >
       <form
-        className="space-y-4"
+        className="min-h-[440px] space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
           onAplicar(f);

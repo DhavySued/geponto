@@ -60,7 +60,7 @@ begin
            coalesce(ev.tipo, j.tipo) as tipo,
            ev.minutos, ev.hora,
            ev.tipo is not null as ocorreu,
-           coalesce(ev.fechado, fn_periodo_fechado(j.data)) as fechado,
+           coalesce(ev.fechado, fn_periodo_fechado(j.data, j.colaborador_id)) as fechado,
            j.id as justificativa_id, j.motivo, j.abona, j.minutos as minutos_abono, j.observacao,
            j.usuario_id, j.updated_at
       from ev

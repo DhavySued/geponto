@@ -98,6 +98,8 @@ export function novaJornada(): Jornada {
     data_base: null,
     ativo: true,
     intervalo_flexivel: false,
+    intervalo_pre_assinalado: false,
+    todas_empresas: false,
     dias: DIAS_SEMANA.map((_, i) => ({
       dia_semana: i,
       folga: i === 0 || i === 6,

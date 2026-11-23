@@ -365,6 +365,7 @@ function FiltroModal({
       aberto={aberto}
       onFechar={onFechar}
       titulo="Filtrar batidas"
+      largura="max-w-3xl"
       descricao="Selecione o colaborador e a data que deseja consultar."
       rodape={
         <div className="flex justify-end gap-2">
@@ -376,7 +377,7 @@ function FiltroModal({
       }
     >
       <form
-        className="space-y-4"
+        className="min-h-[440px] space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
           onAplicar(f);

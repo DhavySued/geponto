@@ -3,6 +3,7 @@ import { formatData, formatMinutos } from '@/lib/format';
 import { textoPercentual } from '@/lib/perfilEvento';
 import { ocorrencia } from '@/lib/ponto';
 import type { EspelhoColaborador, EspelhoPonto } from '@/lib/types';
+import { LogoImpressao } from './CabecalhoImpressao';
 
 const dataCurta = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: 'numeric' });
 const h = (min: number) => (min ? formatMinutos(min) : '');
@@ -40,11 +41,11 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
             {dados.empresa.endereco && ` · ${dados.empresa.endereco}`}
           </p>
         </div>
-        <div className="text-right text-xs text-slate-500">
+        <div className="flex flex-col items-end gap-1.5 text-right text-xs text-slate-500">
+          <LogoImpressao />
           <p className="font-semibold text-slate-800">
             {dataCurta(dados.periodo.inicio)} a {dataCurta(dados.periodo.fim)}
           </p>
-          <p>Emitido em {new Date(dados.emitido_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</p>
         </div>
       </header>
 
@@ -105,6 +106,7 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
                           {b.status === 'desconsiderada' && <sup className="ml-px no-underline">D</sup>}
                         </span>
                       ))}
+                      {d.pre_assinalado && <span className="text-[10px] text-slate-500" title="Intervalo pré-assinalado (Portaria 671)">intervalo PA</span>}
                     </span>
                   </td>
                   <td className="py-1.5 pr-2 text-right tabular-nums text-slate-800">{h(d.trabalhado_min)}</td>
@@ -157,7 +159,7 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
       <p className="mt-4 text-[10px] text-slate-400">
         Marcações: preto = original do registro · <span className="text-blue-700">azul ᴵ = incluída no tratamento</span> ·{' '}
         <span className="text-rose-600 line-through">vermelho ᴰ</span> = desconsiderada (mantida no registro) · BH = vai para o banco de horas ·{' '}
-        <span className="text-emerald-700">E</span> = escala do dia (fora do padrão da jornada).
+        <span className="text-emerald-700">E</span> = escala do dia (fora do padrão da jornada) · intervalo PA = intervalo pré-assinalado (Portaria 671).
       </p>
 
       <footer className="mt-10 grid grid-cols-2 gap-10 text-center text-[11px] text-slate-500">

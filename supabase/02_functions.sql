@@ -116,6 +116,7 @@ begin
      and s.expira_em > now()
      and u.id = s.usuario_id
      and u.status = 'ativo'
+     and (u.master or u.colaborador_id is not null)   -- só o master entra sem colaborador (CPF)
   returning s.usuario_id, s.empresa_id into v_usuario, v_empresa;
 
   if v_usuario is null then
@@ -501,10 +502,27 @@ returns integer language sql immutable as $$
    where p_ini is not null and p_fim is not null and p_fim > p_ini;
 $$;
 
--- Dia dentro de um período fechado?
-create or replace function fn_periodo_fechado(p_data date)
+-- Empresa cujo fechamento vale para o colaborador (sem colaborador: a empresa da sessão)
+create or replace function fn_empresa_fechamento(p_colaborador uuid)
+returns uuid language sql stable set search_path = public as $$
+  select coalesce((select empresa_id from colaboradores where id = p_colaborador), fn_empresa_atual());
+$$;
+
+-- O fechamento vale para a empresa? (fechamentos antigos, sem empresa, valem para todas)
+create or replace function fn_fechamento_da_empresa(p_fechamento_empresa uuid, p_colaborador uuid)
 returns boolean language sql stable set search_path = public as $$
-  select exists (select 1 from fechamentos f where p_data between f.data_inicio and f.data_fim);
+  select p_fechamento_empresa is null
+      or p_fechamento_empresa = fn_empresa_fechamento(p_colaborador)
+      or fn_empresa_fechamento(p_colaborador) is null;
+$$;
+
+-- Dia dentro de um período fechado da empresa do colaborador?
+drop function if exists fn_periodo_fechado(date);
+create or replace function fn_periodo_fechado(p_data date, p_colaborador uuid default null)
+returns boolean language sql stable set search_path = public as $$
+  select exists (select 1 from fechamentos f
+                  where p_data between f.data_inicio and f.data_fim
+                    and fn_fechamento_da_empresa(f.empresa_id, p_colaborador));
 $$;
 
 -- Aloca as batidas do dia nas marcações previstas (E1, S1, E2, S2) pela proximidade do horário,
@@ -675,7 +693,8 @@ returns table (
   falta_bruta                 boolean,   -- dia previsto, encerrado e sem batidas (antes de qualquer abono)
   abono_justificativa_min     integer,   -- minutos abonados por justificativas (atraso, saída e falta)
   falta_folha                 boolean,   -- falta levada para a folha (não debitada do banco de horas)
-  banco_min                   integer    -- o que vai para o banco: saldo, com o crédito multiplicado pelo percentual de HE
+  banco_min                   integer,   -- o que vai para o banco: saldo, com o crédito multiplicado pelo percentual de HE
+  pre_assinalado              boolean    -- o intervalo do dia foi pré-assinalado (não batido)
 )
 language sql stable set search_path = public as $$
 with cfg as (
@@ -715,6 +734,7 @@ base as (
          coalesce(j.intervalo_flexivel, false)
            and (case when e.id is not null then e.saida_intervalo else jd.saida_intervalo end) is not null
            as intervalo_flexivel,
+         coalesce(j.intervalo_pre_assinalado, false) and not coalesce(j.intervalo_flexivel, false) as pre_assinalado_jornada,
          -- Modo de tolerância do perfil: 'batida' usa entrada/saída em cada marcação (a marcação dentro
          -- dela conta como o horário previsto); 'diaria' usa só a geral do dia, sobre o saldo e como
          -- limite para apontar atraso/saída antecipada.
@@ -778,15 +798,47 @@ base as (
 ),
 -- Sentido efetivo de cada batida (fn_batidas_periodo: declarado pelo RH ou sequência automática).
 -- Inclui o dia anterior ao período para calcular a interjornada do primeiro dia.
+bat as (
+  select bt.colaborador_id, bt.data_referencia, bt.data_hora, bt.sentido as sent, bt.turno as tur, false as virtual
+    from fn_batidas_periodo(p_ini - 1, p_fim, p_colaborador) bt
+   where bt.status = 'valida'
+),
+-- Intervalo pré-assinalado: a jornada marca a opção e o colaborador bateu só a entrada e a saída
+-- (sem as batidas do intervalo) → vale a saída e o retorno do intervalo previstos. São marcações
+-- virtuais da apuração: as batidas registradas (e o AFD) não mudam.
+pre as (
+  select x.colaborador_id, x.data, x.si, x.ri
+    from (
+      select bs.colaborador_id, bs.data, b.ini, b.fim,
+             (bs.data + bs.saida_intervalo
+              + case when bs.saida_intervalo < bs.entrada then interval '1 day' else interval '0' end) at time zone cfg.tz as si,
+             (bs.data + bs.retorno_intervalo
+              + case when bs.retorno_intervalo < bs.entrada then interval '1 day' else interval '0' end) at time zone cfg.tz as ri
+        from base bs
+       cross join cfg
+        join (select colaborador_id, data_referencia, min(data_hora) as ini, max(data_hora) as fim
+                from bat
+               group by colaborador_id, data_referencia
+              having count(*) = 2
+                 and count(*) filter (where sent = 'E' and tur = 1) = 1
+                 and count(*) filter (where sent = 'S' and tur = 2) = 1) b
+          on b.colaborador_id = bs.colaborador_id and b.data_referencia = bs.data
+       where bs.pre_assinalado_jornada and not coalesce(bs.folga, true)
+         and bs.entrada is not null and bs.saida_intervalo is not null and bs.retorno_intervalo is not null
+    ) x
+   where x.ini < x.si and x.ri < x.fim
+),
 seq as (
   select x.*,
          lead(x.sent)      over w2 as prox_sent,
          lead(x.tur)       over w2 as prox_tur,
          lead(x.data_hora) over w2 as prox
     from (
-      select bt.colaborador_id, bt.data_referencia, bt.data_hora, bt.sentido as sent, bt.turno as tur
-        from fn_batidas_periodo(p_ini - 1, p_fim, p_colaborador) bt
-       where bt.status = 'valida'
+      select * from bat
+      union all
+      select p.colaborador_id, p.data, v.ts, v.sent, v.tur, true
+        from pre p
+       cross join lateral (values (p.si, 'S', 1), (p.ri, 'E', 2)) v(ts, sent, tur)
     ) x
   window w2 as (partition by x.colaborador_id, x.data_referencia order by x.data_hora)
 ),
@@ -835,7 +887,8 @@ marc as (
          min(s.data_hora) as primeira_ts,
          max(s.data_hora) as ultima_ts,
          (array_agg(s.sent order by s.data_hora desc))[1] as ultimo_sentido,
-         (array_agg(s.tur order by s.data_hora))[1] as primeiro_tur
+         (array_agg(s.tur order by s.data_hora))[1] as primeiro_tur,
+         bool_or(s.virtual) as pre_assinalado
     from seq s
    group by s.colaborador_id, s.data_referencia
 ),
@@ -869,6 +922,7 @@ calc as (
          coalesce(mp.noturno, 0) as noturno,
          mp.pausa,
          m.ultimo_sentido,
+         coalesce(m.pre_assinalado, false) as pre_assinalado,
          (m.primeira_ts at time zone cfg.tz) as primeira,
          -- Turno só conta com entrada e saída: o atraso vem da entrada do primeiro turno completo
          -- (no dia em andamento, um turno aberto ainda conta)
@@ -884,7 +938,7 @@ calc as (
          (m.ultima_ts at time zone cfg.tz) as ultima,
          (extract(epoch from m.primeira_ts - m.ultima_anterior) / 60)::int as interjornada,
          (bs.data >= cfg.hoje) as em_andamento,
-         fn_periodo_fechado(bs.data) as fechado
+         fn_periodo_fechado(bs.data, bs.colaborador_id) as fechado
     from base bs
    cross join cfg
     left join marc_inter m  on m.colaborador_id = bs.colaborador_id and m.data = bs.data
@@ -981,7 +1035,8 @@ select f.colaborador_id,
        f.falta_folha_marcada and f.e_falta,
        case when not (f.usa_bh and not (f.falta_folha_marcada and f.e_falta)) then 0
             when f.saldo > 0 and f.bh_multiplicar then round(f.saldo * (1 + coalesce(f.he_percentual, 0) / 100.0))::int
-            else f.saldo end
+            else f.saldo end,
+       f.pre_assinalado
   from fin f;
 $$;
 
@@ -1020,7 +1075,7 @@ begin
    where origem = 'automatico'
      and data between p_ini and v_fim
      and (p_colaborador is null or colaborador_id = p_colaborador)
-     and not fn_periodo_fechado(data);
+     and not fn_periodo_fechado(data, colaborador_id);
 
   insert into banco_horas (colaborador_id, data, tipo, origem, minutos, descricao, usuario_id)
   select a.colaborador_id, a.data,
@@ -1146,8 +1201,8 @@ begin
     return old;
   end if;
   if tg_table_name = 'batidas' then
-    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data_referencia)
-       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data_referencia) then
+    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data_referencia, old.colaborador_id)
+       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data_referencia, new.colaborador_id) then
       raise exception 'O dia % está em um período fechado. Reabra o período para alterar as batidas.',
         to_char(coalesce(new.data_referencia, old.data_referencia), 'DD/MM/YYYY');
     end if;
@@ -1157,7 +1212,8 @@ begin
       v_ini := least(v_ini, new.data_inicio);
       v_fim := greatest(v_fim, new.data_fim);
     end if;
-    if exists (select 1 from fechamentos f where f.data_inicio <= v_fim and f.data_fim >= v_ini) then
+    if exists (select 1 from fechamentos f where f.data_inicio <= v_fim and f.data_fim >= v_ini
+                  and fn_fechamento_da_empresa(f.empresa_id, coalesce(new.colaborador_id, old.colaborador_id))) then
       raise exception 'O período da ocorrência alcança um período fechado. Reabra o período para alterá-la.';
     end if;
   elsif tg_table_name = 'banco_horas' then
@@ -1165,13 +1221,13 @@ begin
     if (case when tg_op = 'DELETE' then old.origem else new.origem end) = 'automatico' then
       return coalesce(new, old);
     end if;
-    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data)
-       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
+    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data, old.colaborador_id)
+       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data, new.colaborador_id) then
       raise exception 'O dia % está em um período fechado.', to_char(coalesce(new.data, old.data), 'DD/MM/YYYY');
     end if;
   elsif tg_table_name in ('escalas', 'justificativas', 'faltas_folha') then
-    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data)
-       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data) then
+    if tg_op <> 'INSERT' and fn_periodo_fechado(old.data, old.colaborador_id)
+       or tg_op <> 'DELETE' and fn_periodo_fechado(new.data, new.colaborador_id) then
       raise exception 'O dia % está em um período fechado. Reabra o período para alterar %.',
         to_char(coalesce(new.data, old.data), 'DD/MM/YYYY'),
         case tg_table_name when 'escalas' then 'a escala' when 'faltas_folha' then 'a falta' else 'a justificativa' end;

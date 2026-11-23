@@ -13,7 +13,14 @@ import { formatData, formatMinutos, horasParaMinutos, toISODate } from '@/lib/fo
 import { competencia, useFiltrosAux, opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { TIPOS_AUSENCIA } from '@/lib/ponto';
 import { api } from '@/lib/api';
-import type { FiltrosAux, Ocorrencia, TipoAusencia } from '@/lib/types';
+import type { FiltrosAux, Ocorrencia, TipoAusencia, TipoLicencaOpcao } from '@/lib/types';
+
+type Grupo = 'ocorrencias' | 'afastamentos';
+const TIPOS_GRUPO: Record<Grupo, TipoAusencia[]> = {
+  ocorrencias: ['atestado', 'folga', 'falta_justificada', 'abono'],
+  afastamentos: ['afastamento', 'ferias'],
+};
+const tiposDo = (g: Grupo) => TIPOS_GRUPO[g].map((k) => [k, TIPOS_AUSENCIA[k]] as const);
 
 const dataCurta = (s: string) => formatData(s, { day: '2-digit', month: '2-digit', year: '2-digit' });
 
@@ -26,25 +33,31 @@ interface FormOcorrencia {
   emHoras: boolean;
   horas: string;
   justificativa: string;
+  licenca_id: string;
 }
 
 function OcorrenciaModal({
   aberto,
   ocorrencia,
   aux,
+  grupo,
+  licencas,
   onFechar,
   onSalvo,
 }: {
   aberto: boolean;
   ocorrencia: Ocorrencia | null;
   aux: FiltrosAux | null;
+  grupo: Grupo;
+  licencas: TipoLicencaOpcao[];
   onFechar: () => void;
   onSalvo: () => void;
 }) {
   const toast = useToast();
   const hoje = toISODate(new Date());
+  const tipoInicial: TipoAusencia = grupo === 'afastamentos' ? 'afastamento' : 'atestado';
   const [form, setForm] = useState<FormOcorrencia>({
-    colaboradores: [], tipo: 'atestado', data_inicio: hoje, data_fim: hoje, abona: true, emHoras: false, horas: '', justificativa: '',
+    colaboradores: [], tipo: tipoInicial, data_inicio: hoje, data_fim: hoje, abona: true, emHoras: false, horas: '', justificativa: '', licenca_id: '',
   });
   const [busca, setBusca] = useState('');
   const [depto, setDepto] = useState('');
@@ -67,10 +80,11 @@ function OcorrenciaModal({
             emHoras: ocorrencia.minutos != null,
             horas: ocorrencia.minutos != null ? formatMinutos(ocorrencia.minutos).replace('h', ':') : '',
             justificativa: ocorrencia.justificativa ?? '',
+            licenca_id: ocorrencia.licenca_id ?? '',
           }
-        : { colaboradores: [], tipo: 'atestado', data_inicio: hoje, data_fim: hoje, abona: true, emHoras: false, horas: '', justificativa: '' },
+        : { colaboradores: [], tipo: tipoInicial, data_inicio: hoje, data_fim: hoje, abona: true, emHoras: false, horas: '', justificativa: '', licenca_id: '' },
     );
-  }, [aberto, ocorrencia, hoje]);
+  }, [aberto, ocorrencia, hoje, tipoInicial]);
 
   const set = <K extends keyof FormOcorrencia>(k: K, v: FormOcorrencia[K]) => setForm((f) => ({ ...f, [k]: v }));
   const visiveis = useMemo(
@@ -99,6 +113,7 @@ function OcorrenciaModal({
     setErro(null);
     const emHoras = form.tipo === 'abono' && form.emHoras;
     if (emHoras && horasParaMinutos(form.horas) <= 0) return setErro('Informe as horas abonadas (ex.: 1:30).');
+    if (form.tipo === 'afastamento' && !form.licenca_id) return setErro('Escolha o tipo de licença do afastamento.');
     setSalvando(true);
     try {
       const r = await api<{ qtd: number }>('api_ocorrencia_salvar', {
@@ -112,9 +127,12 @@ function OcorrenciaModal({
           abona: emHoras || form.abona,
           minutos: emHoras ? horasParaMinutos(form.horas) : null,
           justificativa: form.justificativa,
+          grupo,
+          licenca_id: form.tipo === 'afastamento' ? form.licenca_id || null : null,
         },
       });
-      toast(ocorrencia ? 'Ocorrência atualizada.' : `Ocorrência lançada para ${r.qtd} colaborador(es).`);
+      const nome = grupo === 'afastamentos' ? 'Afastamento' : 'Ocorrência';
+      toast(ocorrencia ? `${nome} atualizado(a).` : `${nome} lançado(a) para ${r.qtd} colaborador(es).`);
       onSalvo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao salvar.');
@@ -130,7 +148,7 @@ function OcorrenciaModal({
       aberto={aberto}
       onFechar={onFechar}
       largura="max-w-3xl"
-      titulo={ocorrencia ? 'Editar ocorrência' : 'Lançar ocorrência'}
+      titulo={grupo === 'afastamentos' ? (ocorrencia ? 'Editar afastamento' : 'Lançar afastamento') : (ocorrencia ? 'Editar ocorrência' : 'Lançar ocorrência')}
       descricao="Dias com ocorrência que abona não geram falta nem débito no banco de horas."
       rodape={
         <>
@@ -186,9 +204,26 @@ function OcorrenciaModal({
         <section className="space-y-4">
           <Field label="Tipo" obrigatorio dica={TIPOS_AUSENCIA[form.tipo].descricao}>
             <select className="input" value={form.tipo} onChange={(e) => set('tipo', e.target.value as TipoAusencia)}>
-              {Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              {tiposDo(grupo).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </Field>
+
+          {form.tipo === 'afastamento' && (
+            <Field label="Tipo de licença" obrigatorio
+              dica={licencas.length === 0 ? 'Nenhum tipo de licença ativo: cadastre em Cadastros › Tipos de Licença.' : undefined}>
+              <select className="input" value={form.licenca_id}
+                onChange={(e) => {
+                  const l = licencas.find((x) => x.id === e.target.value);
+                  setForm((f) => ({ ...f, licenca_id: e.target.value, abona: l ? l.abona : f.abona }));
+                }}>
+                <option value="">Selecione…</option>
+                {ocorrencia?.licenca_id && !licencas.some((l) => l.id === ocorrencia.licenca_id) && (
+                  <option value={ocorrencia.licenca_id}>{ocorrencia.licenca}</option>
+                )}
+                {licencas.map((l) => <option key={l.id} value={l.id}>{l.descricao}</option>)}
+              </select>
+            </Field>
+          )}
 
           {form.tipo === 'abono' && (
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 text-xs font-medium">
@@ -237,10 +272,23 @@ function OcorrenciaModal({
   );
 }
 
+export function Afastamentos() {
+  return <PaginaOcorrencias grupo="afastamentos" />;
+}
+
 export default function Ocorrencias() {
+  return <PaginaOcorrencias grupo="ocorrencias" />;
+}
+
+function PaginaOcorrencias({ grupo }: { grupo: Grupo }) {
   const { pode } = useAuth();
   const toast = useToast();
-  const podeEditar = pode('ocorrencias', 'editar');
+  const podeEditar = pode(grupo, 'editar');
+  const afast = grupo === 'afastamentos';
+  const [licencas, setLicencas] = useState<TipoLicencaOpcao[]>([]);
+  useEffect(() => {
+    if (afast) api<TipoLicencaOpcao[]>('api_tipos_licenca_listar', { p_ativos: true }).then(setLicencas).catch(() => setLicencas([]));
+  }, [afast]);
   const { aux, erro: erroAux } = useFiltrosAux();
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '', tipo: '' });
@@ -261,6 +309,7 @@ export default function Ocorrencias() {
           p_colaboradores: paramColaboradores(filtros.colaboradores),
           p_departamento: filtros.departamento || null,
           p_tipo: filtros.tipo || null,
+          p_grupo: grupo,
         }),
       );
     } catch (e) {
@@ -268,7 +317,7 @@ export default function Ocorrencias() {
     } finally {
       setCarregando(false);
     }
-  }, [periodo, filtros]);
+  }, [periodo, filtros, grupo]);
 
   useEffect(() => {
     consultar();
@@ -296,14 +345,16 @@ export default function Ocorrencias() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Ocorrências e afastamentos</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">{afast ? 'Afastamentos' : 'Ocorrências'}</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Atestados, férias, afastamentos, folgas, faltas justificadas e abonos. Lance para um colaborador ou para vários de uma vez.
+            {afast
+              ? 'Afastamentos (pelo tipo de licença) e férias. Lance para um colaborador ou para vários de uma vez.'
+              : 'Atestados, folgas, faltas justificadas e abonos. Lance para um colaborador ou para vários de uma vez.'}
           </p>
         </div>
         {podeEditar && (
           <Button variant="accent" onClick={() => setModal({ aberto: true, ocorrencia: null })}>
-            <Plus className="h-4 w-4" /> Lançar ocorrência
+            <Plus className="h-4 w-4" /> {afast ? 'Lançar afastamento' : 'Lançar ocorrência'}
           </Button>
         )}
       </div>
@@ -319,7 +370,7 @@ export default function Ocorrencias() {
           <Field label="Tipo">
             <select className="input" value={filtros.tipo} onChange={(e) => setFiltros((f) => ({ ...f, tipo: e.target.value }))}>
               <option value="">Todos</option>
-              {Object.entries(TIPOS_AUSENCIA).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              {tiposDo(grupo).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </Field>
           <Field label="Departamento">
@@ -357,8 +408,8 @@ export default function Ocorrencias() {
         <div className="card">
           <EmptyState
             icon={Stethoscope}
-            titulo="Nenhuma ocorrência no período"
-            descricao="Lance atestados, férias e afastamentos para que esses dias não sejam contados como falta."
+            titulo={afast ? 'Nenhum afastamento no período' : 'Nenhuma ocorrência no período'}
+            descricao={afast ? 'Lance afastamentos e férias para que esses dias não sejam contados como falta.' : 'Lance atestados, folgas e abonos para que esses dias não sejam contados como falta.'}
           />
         </div>
       ) : (
@@ -383,6 +434,7 @@ export default function Ocorrencias() {
                   </td>
                   <td className="px-5 py-3">
                     <Badge tone={o.abona ? 'blue' : 'orange'} dot={false}>{TIPOS_AUSENCIA[o.tipo]?.label ?? o.tipo}</Badge>
+                    {o.licenca && <p className="mt-1 text-xs text-slate-500">{o.licenca}</p>}
                     {!o.abona && <p className="mt-1 text-[11px] text-accent-700">Não abona</p>}
                   </td>
                   <td className="whitespace-nowrap px-5 py-3 tabular-nums text-slate-600">
@@ -436,6 +488,8 @@ export default function Ocorrencias() {
         aberto={modal.aberto}
         ocorrencia={modal.ocorrencia}
         aux={aux}
+        grupo={grupo}
+        licencas={licencas}
         onFechar={() => setModal((m) => ({ ...m, aberto: false }))}
         onSalvo={() => {
           setModal({ aberto: false, ocorrencia: null });

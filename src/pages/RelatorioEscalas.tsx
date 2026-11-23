@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { AlertTriangle, CalendarRange, Download, Printer, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
+import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -122,7 +123,7 @@ export default function RelatorioEscalas() {
         <div className="card"><EmptyState icon={CalendarRange} titulo="Nenhuma escala no período" descricao="Não há dias escalados com esses filtros." /></div>
       ) : (
         <>
-          <p className="hidden text-sm text-slate-600 print:block">Período de {formatData(periodo.ini)} a {formatData(periodo.fim)}</p>
+          <CabecalhoImpressao titulo="Relatório de escalas" periodo={periodo} />
           <div className="grid gap-3 sm:grid-cols-5">
             {[
               ['Colaboradores', resumo.colaboradores],

@@ -1,6 +1,6 @@
 import clsx from 'clsx';
-import { AlarmClock, AlertTriangle, RefreshCw, UserCheck, UserX } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { AlarmClock, AlertTriangle, Hourglass, RefreshCw, UserCheck, UserX } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { AbsenteismoChart } from '@/components/dashboard/AbsenteismoChart';
 import { BancoHorasChart } from '@/components/dashboard/BancoHorasChart';
 import { KpiCard, KpiSkeleton } from '@/components/dashboard/KpiCard';
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatMinutos, numero, toISODate } from '@/lib/format';
 import { api } from '@/lib/api';
+import { distribuir, widgetLigado, WIDGETS, type ConfigDashboard, type WidgetChave } from '@/lib/dashboardWidgets';
 import type { DashboardData } from '@/lib/types';
 
 type Preset = 'mes' | 'mes_anterior' | '30d' | 'personalizado';
@@ -69,6 +70,10 @@ function Painel({
   );
 }
 
+// Colunas dos KPIs conforme quantos estão ligados (sem sobrar espaço vazio)
+const KPI_COLS: Record<number, string> = { 1: '', 2: 'sm:grid-cols-2', 3: 'md:grid-cols-3', 4: 'sm:grid-cols-2 xl:grid-cols-4' };
+const SPAN: Record<number, string> = { 1: '', 2: 'xl:col-span-2', 3: 'xl:col-span-3' };
+
 function saudacao() {
   const h = new Date().getHours();
   return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
@@ -88,6 +93,9 @@ function DashboardGeral() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
+  const [cfg, setCfg] = useState<ConfigDashboard | null>(null);
+  useEffect(() => { api<ConfigDashboard>('api_dashboard_config').then(setCfg).catch(() => setCfg({})); }, []);
+  const ligado = (k: WidgetChave) => widgetLigado(cfg, k);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -115,6 +123,139 @@ function DashboardGeral() {
   };
 
   const r = dados?.resumo;
+  const kpis = WIDGETS.filter((w) => w.tipo === 'indicador' && ligado(w.chave)).map((w) => w.chave);
+  const linhas = cfg ? distribuir(WIDGETS.filter((w) => w.tipo === 'grafico' && ligado(w.chave))) : [];
+
+  const kpi = (k: WidgetChave) => {
+    if (!r) return null;
+    switch (k) {
+      case 'kpi_presentes':
+        return (
+          <KpiCard
+            destaque
+            icon={UserCheck}
+            titulo="Presentes hoje"
+            valor={numero(r.hoje.presentes)}
+            complemento={`de ${numero(r.hoje.previstos)} escalados`}
+            rodape={
+              <div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/15">
+                  <div className="h-full rounded-full bg-accent-500"
+                    style={{ width: `${r.hoje.previstos ? (r.hoje.presentes / r.hoje.previstos) * 100 : 0}%` }} />
+                </div>
+                <p className="mt-2">{numero(r.hoje.batidas)} marcações registradas hoje</p>
+              </div>
+            }
+          />
+        );
+      case 'kpi_faltas':
+        return (
+          <KpiCard
+            icon={UserX}
+            titulo="Faltas no período"
+            valor={numero(r.periodo.faltas)}
+            complemento={r.periodo.absenteismo_pct !== null ? `${r.periodo.absenteismo_pct.toLocaleString('pt-BR')}%` : undefined}
+            rodape={
+              <span>
+                Taxa de absenteísmo sobre {numero(r.periodo.dias_previstos)} dias escalados ·{' '}
+                <strong className="font-medium text-slate-700">{numero(r.hoje.ausentes)} ausentes hoje</strong>
+              </span>
+            }
+          />
+        );
+      case 'kpi_atrasos':
+        return (
+          <KpiCard
+            icon={AlarmClock}
+            titulo="Atrasos no período"
+            valor={numero(r.periodo.atrasos)}
+            complemento={formatMinutos(r.periodo.minutos_atraso)}
+            rodape={
+              <span>
+                Tempo total de atraso ·{' '}
+                <strong className="font-medium text-slate-700">{numero(r.hoje.atrasados)} atrasados hoje</strong>
+              </span>
+            }
+          />
+        );
+      case 'kpi_saldo_bh':
+        return (
+          <KpiCard
+            icon={Hourglass}
+            titulo="Saldo do banco de horas"
+            valor={formatMinutos(r.banco_horas.saldo_positivo + r.banco_horas.saldo_negativo, true)}
+            rodape={
+              <div className="flex gap-4">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm bg-[#3b6fd8]" />
+                  {formatMinutos(r.banco_horas.saldo_positivo, true)} ({r.banco_horas.qtd_positivos})
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm bg-accent-500" />
+                  {formatMinutos(r.banco_horas.saldo_negativo, true)} ({r.banco_horas.qtd_negativos})
+                </span>
+              </div>
+            }
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  const painel = (k: WidgetChave, className: string) => {
+    switch (k) {
+      case 'banco_horas':
+        return (
+          <Painel key={k} className={className} titulo="Banco de horas por colaborador" subtitulo="Saldo acumulado até o fim do período selecionado">
+            {dados ? <BancoHorasChart dados={dados.banco_horas} /> : <div className="h-64 animate-pulse rounded-xl bg-slate-50" />}
+          </Painel>
+        );
+      case 'situacao':
+        return (
+          <Painel key={k} className={className} titulo="Situação dos colaboradores" subtitulo="Quadro atual">
+            {r ? <SituacaoColaboradores situacoes={r.situacoes} /> : <div className="h-36 animate-pulse rounded-xl bg-slate-50" />}
+          </Painel>
+        );
+      case 'absenteismo':
+        return (
+          <Painel key={k} className={className} titulo="Faltas e atrasos por dia" subtitulo="Ocorrências diárias no período (dias úteis)">
+            {dados ? <AbsenteismoChart dados={dados.absenteismo_diario} /> : <div className="h-64 animate-pulse rounded-xl bg-slate-50" />}
+          </Painel>
+        );
+      case 'ranking_atrasos':
+        return (
+          <Painel key={k} className={className} titulo="Maiores atrasos" subtitulo="Top 5 por tempo acumulado no período">
+            {dados ? <RankingAtrasos dados={dados.ranking_atrasos} /> : <div className="h-48 animate-pulse rounded-xl bg-slate-50" />}
+          </Painel>
+        );
+      case 'registros_hoje':
+        return (
+          <Painel
+            key={k}
+            className={className}
+            titulo="Registros diários"
+            subtitulo={atualizadoEm
+              ? `Batidas de hoje · atualizado às ${atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+              : 'Batidas de hoje'}
+            acao={
+              <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+                  <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                </span>
+                Ao vivo
+              </span>
+            }
+            semPadding
+          >
+            {dados ? <RegistrosHoje dados={dados.registros_hoje} /> : <div className="mx-5 mb-4 h-64 animate-pulse rounded-xl bg-slate-50" />}
+          </Painel>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -193,114 +334,19 @@ function DashboardGeral() {
         </div>
       )}
 
-      {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {!r ? (
-          Array.from({ length: 3 }, (_, i) => <KpiSkeleton key={i} />)
-        ) : (
-          <>
-            <KpiCard
-              destaque
-              icon={UserCheck}
-              titulo="Presentes hoje"
-              valor={numero(r.hoje.presentes)}
-              complemento={`de ${numero(r.hoje.previstos)} escalados`}
-              rodape={
-                <div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-white/15">
-                    <div
-                      className="h-full rounded-full bg-accent-500"
-                      style={{ width: `${r.hoje.previstos ? (r.hoje.presentes / r.hoje.previstos) * 100 : 0}%` }}
-                    />
-                  </div>
-                  <p className="mt-2">{numero(r.hoje.batidas)} marcações registradas hoje</p>
-                </div>
-              }
-            />
-            <KpiCard
-              icon={UserX}
-              titulo="Faltas no período"
-              valor={numero(r.periodo.faltas)}
-              complemento={r.periodo.absenteismo_pct !== null ? `${r.periodo.absenteismo_pct.toLocaleString('pt-BR')}%` : undefined}
-              rodape={
-                <span>
-                  Taxa de absenteísmo sobre {numero(r.periodo.dias_previstos)} dias escalados ·{' '}
-                  <strong className="font-medium text-slate-700">{numero(r.hoje.ausentes)} ausentes hoje</strong>
-                </span>
-              }
-            />
-            <KpiCard
-              icon={AlarmClock}
-              titulo="Atrasos no período"
-              valor={numero(r.periodo.atrasos)}
-              complemento={formatMinutos(r.periodo.minutos_atraso)}
-              rodape={
-                <span>
-                  Tempo total de atraso ·{' '}
-                  <strong className="font-medium text-slate-700">{numero(r.hoje.atrasados)} atrasados hoje</strong>
-                </span>
-              }
-            />
-          </>
-        )}
-      </div>
-
-      {/* Banco de horas + situação */}
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Painel
-          className="xl:col-span-2"
-          titulo="Banco de horas por colaborador"
-          subtitulo="Saldo acumulado até o fim do período selecionado"
-        >
-          {dados ? <BancoHorasChart dados={dados.banco_horas} /> : <div className="h-64 animate-pulse rounded-xl bg-slate-50" />}
-        </Painel>
-
-        <div className="grid gap-6">
-          <Painel titulo="Situação dos colaboradores" subtitulo="Quadro atual">
-            {r ? <SituacaoColaboradores situacoes={r.situacoes} /> : <div className="h-36 animate-pulse rounded-xl bg-slate-50" />}
-          </Painel>
+      {/* KPIs (os ligados em Configurações › Dashboard) */}
+      {kpis.length > 0 && (
+        <div className={clsx('grid gap-4', KPI_COLS[kpis.length])}>
+          {!r ? kpis.map((k) => <KpiSkeleton key={k} />) : kpis.map((k) => <Fragment key={k}>{kpi(k)}</Fragment>)}
         </div>
-      </div>
+      )}
 
-      {/* Absenteísmo */}
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Painel
-          className="xl:col-span-2"
-          titulo="Faltas e atrasos por dia"
-          subtitulo="Ocorrências diárias no período (dias úteis)"
-        >
-          {dados ? (
-            <AbsenteismoChart dados={dados.absenteismo_diario} />
-          ) : (
-            <div className="h-64 animate-pulse rounded-xl bg-slate-50" />
-          )}
-        </Painel>
-        <Painel titulo="Maiores atrasos" subtitulo="Top 5 por tempo acumulado no período">
-          {dados ? <RankingAtrasos dados={dados.ranking_atrasos} /> : <div className="h-48 animate-pulse rounded-xl bg-slate-50" />}
-        </Painel>
-      </div>
-
-      {/* Registros do dia */}
-      <Painel
-        titulo="Registros diários"
-        subtitulo={
-          atualizadoEm
-            ? `Batidas de hoje · atualizado às ${atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-            : 'Batidas de hoje'
-        }
-        acao={
-          <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-              <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            </span>
-            Ao vivo
-          </span>
-        }
-        semPadding
-      >
-        {dados ? <RegistrosHoje dados={dados.registros_hoje} /> : <div className="mx-5 mb-4 h-64 animate-pulse rounded-xl bg-slate-50" />}
-      </Painel>
+      {/* Gráficos e quadros: linhas de 3 colunas sem buracos */}
+      {linhas.map((l, i) => (
+        <div key={i} className="grid gap-6 xl:grid-cols-3">
+          {l.map((w) => painel(w.chave, SPAN[w.span]))}
+        </div>
+      ))}
     </div>
   );
 }

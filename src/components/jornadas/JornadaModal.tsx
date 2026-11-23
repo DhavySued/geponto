@@ -396,6 +396,20 @@ export function JornadaModal({
           }
         />
 
+        <Switch
+          ativo={form.intervalo_pre_assinalado}
+          onChange={(v) => set('intervalo_pre_assinalado', v)}
+          label="Intervalo pré-assinalado (Portaria 671)"
+          descricao="Quando o colaborador não bater a saída e o retorno do intervalo, o sistema considera o intervalo previsto (as marcações aparecem como pré-assinaladas no espelho)."
+        />
+
+        <Switch
+          ativo={form.todas_empresas}
+          onChange={(v) => set('todas_empresas', v)}
+          label="Mostrar em todas as empresas"
+          descricao="Desligado: a jornada só aparece na empresa em que foi cadastrada."
+        />
+
         <div className="grid gap-3 sm:grid-cols-2 sm:items-center">
           <Switch
             ativo={form.ativo}

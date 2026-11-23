@@ -358,6 +358,9 @@ create table if not exists escala_lancamentos (
   check (data_fim >= data_inicio)
 );
 create index if not exists ix_escala_lancamentos_periodo on escala_lancamentos (data_inicio, data_fim);
+-- Horário próprio de cada dia: { "AAAA-MM-DD": { tipo, entrada, saida_intervalo, retorno_intervalo, saida } }.
+-- Os dias sem ajuste seguem o horário da escala.
+alter table escala_lancamentos add column if not exists horarios jsonb not null default '{}'::jsonb;
 
 alter table escalas add column if not exists lancamento_id uuid references escala_lancamentos(id) on delete cascade;
 create index if not exists ix_escalas_lancamento on escalas (lancamento_id);
@@ -479,6 +482,16 @@ create table if not exists motivos_batida (
   ativo       boolean not null default true,
   created_at  timestamptz not null default now()
 );
+
+-- Tipos de licença (usados nos afastamentos): maternidade, INSS, acidente de trabalho…
+create table if not exists tipos_licenca (
+  id          uuid primary key default gen_random_uuid(),
+  descricao   text not null unique,
+  abona       boolean not null default true,
+  ativo       boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+alter table ausencias add column if not exists licenca_id uuid references tipos_licenca(id);
 
 alter table batidas add column if not exists motivo_id  uuid references motivos_batida(id);
 alter table batidas add column if not exists observacao text;
@@ -1202,6 +1215,36 @@ alter table sessoes add column if not exists empresa_id uuid references empresas
 alter table locais_ponto add column if not exists empresa_id uuid references empresas(id) on delete cascade;
 create unique index if not exists ux_locais_ponto_empresa on locais_ponto (empresa_id) where empresa_id is not null;
 
+-- Jornadas e regras de cálculo são da empresa em que foram criadas; só aparecem nas outras
+-- empresas com "mostrar em todas as empresas". As que já existiam continuam valendo para todas.
+alter table jornadas       add column if not exists empresa_id uuid references empresas(id) on delete set null;
+alter table perfis_eventos add column if not exists empresa_id uuid references empresas(id) on delete set null;
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_name = 'jornadas' and column_name = 'todas_empresas') then
+    alter table jornadas add column todas_empresas boolean not null default false;
+    update jornadas set todas_empresas = true;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_name = 'perfis_eventos' and column_name = 'todas_empresas') then
+    alter table perfis_eventos add column todas_empresas boolean not null default false;
+    update perfis_eventos set todas_empresas = true;
+  end if;
+end $$;
+-- Cada empresa fecha a sua competência (empresa_id nulo: fechamento antigo, vale para todas)
+alter table fechamentos add column if not exists empresa_id uuid references empresas(id) on delete cascade;
+create index if not exists ix_fechamentos_empresa on fechamentos (empresa_id, data_inicio, data_fim);
+
+-- Indicadores e gráficos do dashboard ligados em cada empresa ({chave: true/false}; ausente = padrão)
+alter table empresas add column if not exists dashboard jsonb not null default '{}'::jsonb;
+
+-- Intervalo pré-assinalado (Portaria 671): sem as batidas do intervalo, vale o intervalo previsto
+alter table jornadas add column if not exists intervalo_pre_assinalado boolean not null default false;
+
+-- A jornada / regra aparece na empresa da sessão?
+create or replace function fn_da_empresa(p_empresa uuid, p_todas boolean)
+returns boolean language sql stable set search_path = public as $$
+  select coalesce(p_todas, false) or p_empresa is null or fn_empresa_atual() is null or p_empresa = fn_empresa_atual();
+$$;
+
 -- Local de ponto próprio do colaborador (ex.: home office). local_ponto_modo diz onde ele pode bater:
 --   empresa → só no local da empresa · proprio → só no local dele · ambos → em qualquer um dos dois
 alter table locais_ponto add column if not exists colaborador_id uuid references colaboradores(id) on delete cascade;
@@ -1254,6 +1297,7 @@ alter table ausencias             enable row level security;
 alter table batidas               enable row level security;
 alter table batida_ajustes        enable row level security;
 alter table motivos_batida        enable row level security;
+alter table tipos_licenca         enable row level security;
 alter table banco_horas           enable row level security;
 alter table fechamentos           enable row level security;
 alter table solicitacoes          enable row level security;
@@ -1336,7 +1380,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['empresa', 'empresas', 'perfis', 'perfil_permissoes', 'usuarios', 'usuario_empresas', 'departamentos', 'cargos', 'jornadas', 'jornada_dias', 'feriados', 'colaboradores', 'colaborador_situacoes', 'ausencias', 'escalas', 'escala_lancamentos', 'batidas', 'locais_ponto', 'motivos_batida', 'banco_horas', 'fechamentos', 'solicitacoes', 'eventos_folha', 'perfis_eventos', 'perfil_evento_he', 'justificativas', 'faltas_folha'] loop
+  foreach t in array array['empresa', 'empresas', 'perfis', 'perfil_permissoes', 'usuarios', 'usuario_empresas', 'departamentos', 'cargos', 'jornadas', 'jornada_dias', 'feriados', 'colaboradores', 'colaborador_situacoes', 'ausencias', 'escalas', 'escala_lancamentos', 'batidas', 'locais_ponto', 'motivos_batida', 'tipos_licenca', 'banco_horas', 'fechamentos', 'solicitacoes', 'eventos_folha', 'perfis_eventos', 'perfil_evento_he', 'justificativas', 'faltas_folha'] loop
     execute format('drop trigger if exists trg_auditoria on %I', t);
     execute format('create trigger trg_auditoria after insert or update or delete on %I for each row execute function fn_auditar()', t);
   end loop;

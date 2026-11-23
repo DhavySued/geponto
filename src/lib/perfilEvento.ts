@@ -18,6 +18,7 @@ export function novoPerfilEvento(): PerfilEvento {
     nome: '',
     descricao: '',
     padrao: false,
+    todas_empresas: false,
     tolerancia_entrada_min: 5,
     tolerancia_saida_min: 5,
     tolerancia_diaria_min: 10,

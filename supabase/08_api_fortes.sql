@@ -126,20 +126,31 @@ end $$;
 -- Ocorrências (afastamentos, atestados, férias, folgas, faltas justificadas, abonos)
 -- -----------------------------------------------------------------------------
 drop function if exists api_ocorrencias_listar(text, date, date, uuid, uuid, text);
+drop function if exists api_ocorrencias_listar(text, date, date, uuid, uuid, text, uuid[]);
+-- Afastamentos (afastamento e férias) ficam no menu Afastamentos; o resto, em Ocorrências
+create or replace function fn_ausencia_grupo(p_tipo tipo_ausencia)
+returns text language sql immutable as $$
+  select case when p_tipo in ('afastamento', 'ferias') then 'afastamentos' else 'ocorrencias' end;
+$$;
+
 create or replace function api_ocorrencias_listar(
   p_token text, p_ini date, p_fim date,
-  p_colaborador uuid default null, p_departamento uuid default null, p_tipo text default null, p_colaboradores uuid[] default null)
+  p_colaborador uuid default null, p_departamento uuid default null, p_tipo text default null, p_colaboradores uuid[] default null,
+  p_grupo text default 'ocorrencias')
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare v_grupo text := case when p_grupo = 'afastamentos' then 'afastamentos' else 'ocorrencias' end;
 begin
-  perform fn_auth(p_token, 'ocorrencias');
+  perform fn_auth(p_token, v_grupo);
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'id', a.id, 'colaborador_id', c.id, 'colaborador', c.nome, 'matricula', c.matricula,
              'departamento', d.nome, 'tipo', a.tipo, 'data_inicio', a.data_inicio, 'data_fim', a.data_fim,
              'dias', a.data_fim - a.data_inicio + 1, 'abona', a.abona, 'minutos', a.minutos,
              'justificativa', a.justificativa, 'usuario', u.nome, 'created_at', a.created_at,
+             'licenca_id', a.licenca_id, 'licenca', (select tl.descricao from tipos_licenca tl where tl.id = a.licenca_id),
              'fechado', exists (select 1 from fechamentos f
-                                 where f.data_inicio <= a.data_fim and f.data_fim >= a.data_inicio))
+                                 where f.data_inicio <= a.data_fim and f.data_fim >= a.data_inicio
+                                   and fn_fechamento_da_empresa(f.empresa_id, a.colaborador_id)))
            order by a.data_inicio desc, c.nome)
       from ausencias a
       join colaboradores c      on c.id = a.colaborador_id
@@ -149,6 +160,7 @@ begin
        and fn_filtro_colaborador(c.id, p_colaborador, p_colaboradores)
        and (p_departamento is null or c.departamento_id = p_departamento)
        and (p_tipo is null or a.tipo::text = p_tipo)
+       and fn_ausencia_grupo(a.tipo) = v_grupo
        and fn_visivel(c.id)), '[]'::jsonb);
 end $$;
 
@@ -157,8 +169,9 @@ end $$;
 create or replace function api_ocorrencia_salvar(p_token text, p_dados jsonb)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
-  v_usuario uuid := fn_auth(p_token, 'ocorrencias', true);
+  v_usuario uuid := fn_auth(p_token, case when p_dados ->> 'grupo' = 'afastamentos' then 'afastamentos' else 'ocorrencias' end, true);
   d         jsonb := p_dados;
+  v_licenca uuid := nullif(d ->> 'licenca_id', '')::uuid;
   v_id      uuid := nullif(d ->> 'id', '')::uuid;
   v_tipo    tipo_ausencia;
   v_ini     date := fn_txt(d, 'data_inicio')::date;
@@ -170,6 +183,23 @@ declare
 begin
   if fn_txt(d, 'tipo') is null then raise exception 'Selecione o tipo da ocorrência.'; end if;
   v_tipo := fn_txt(d, 'tipo')::tipo_ausencia;
+  if fn_ausencia_grupo(v_tipo) <> coalesce(nullif(d ->> 'grupo', ''), 'ocorrencias') then
+    raise exception '%', case when fn_ausencia_grupo(v_tipo) = 'afastamentos'
+                              then 'Afastamentos e férias são lançados no menu Afastamentos.'
+                              else 'Este tipo é lançado no menu Ocorrências.' end;
+  end if;
+  if v_id is not null and (select fn_ausencia_grupo(tipo) from ausencias where id = v_id) is distinct from fn_ausencia_grupo(v_tipo) then
+    raise exception 'Não é possível trocar uma ocorrência por um afastamento (ou o contrário). Exclua e lance de novo.';
+  end if;
+  if v_tipo = 'afastamento' then
+    if v_licenca is null then raise exception 'Escolha o tipo de licença do afastamento.'; end if;
+    if not exists (select 1 from tipos_licenca where id = v_licenca
+                     and (ativo or id = (select licenca_id from ausencias where id = v_id))) then
+      raise exception 'Escolha um tipo de licença ativo.';
+    end if;
+  else
+    v_licenca := null;
+  end if;
   if v_ini is null then raise exception 'Informe a data inicial.'; end if;
   if v_fim < v_ini then raise exception 'A data final não pode ser anterior à inicial.'; end if;
   if fn_txt(d, 'justificativa') is null then raise exception 'Informe a justificativa.'; end if;
@@ -201,7 +231,7 @@ begin
         raise exception '% já tem uma ocorrência que cobre parte deste período.', v_conflito;
       end if;
     end if;
-    update ausencias set tipo = v_tipo, data_inicio = v_ini, data_fim = v_fim,
+    update ausencias set tipo = v_tipo, data_inicio = v_ini, data_fim = v_fim, licenca_id = v_licenca,
                          abona = coalesce((d ->> 'abona')::boolean, true), minutos = v_min,
                          justificativa = fn_txt(d, 'justificativa'), usuario_id = v_usuario
      where id = v_id and fn_visivel(colaborador_id);
@@ -221,8 +251,8 @@ begin
     end if;
   end if;
 
-  insert into ausencias (colaborador_id, tipo, data_inicio, data_fim, abona, minutos, justificativa, usuario_id)
-  select c, v_tipo, v_ini, v_fim, coalesce((d ->> 'abona')::boolean, true), v_min, fn_txt(d, 'justificativa'), v_usuario
+  insert into ausencias (colaborador_id, tipo, data_inicio, data_fim, abona, minutos, justificativa, usuario_id, licenca_id)
+  select c, v_tipo, v_ini, v_fim, coalesce((d ->> 'abona')::boolean, true), v_min, fn_txt(d, 'justificativa'), v_usuario, v_licenca
     from unnest(v_colabs) c;
   get diagnostics v_qtd = row_count;
   return jsonb_build_object('ok', true, 'qtd', v_qtd);
@@ -233,10 +263,234 @@ end $$;
 create or replace function api_ocorrencia_excluir(p_token text, p_id uuid)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
-  perform fn_auth(p_token, 'ocorrencias', true);
+  perform fn_auth(p_token, coalesce((select fn_ausencia_grupo(tipo) from ausencias where id = p_id), 'ocorrencias'), true);
   delete from ausencias where id = p_id and fn_visivel(colaborador_id);
   if not found then raise exception 'Ocorrência não encontrada.'; end if;
   return jsonb_build_object('ok', true);
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Tipos de licença (afastamentos) e motivos de batida: criar, alterar, desativar e excluir
+-- (não exclui o que já foi lançado: nesse caso, desative)
+-- -----------------------------------------------------------------------------
+create or replace function api_tipos_licenca_listar(p_token text, p_ativos boolean default false)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, case when p_ativos then 'afastamentos' else 'tipos_licenca' end);
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('id', t.id, 'descricao', t.descricao, 'abona', t.abona, 'ativo', t.ativo,
+                                        'em_uso', (select count(*) from ausencias a where a.licenca_id = t.id))
+                     order by t.ativo desc, t.descricao)
+      from tipos_licenca t where t.ativo or not p_ativos), '[]'::jsonb);
+end $$;
+
+create or replace function api_tipo_licenca_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d jsonb := p_dados;
+  v_id uuid := nullif(d ->> 'id', '')::uuid;
+begin
+  perform fn_auth(p_token, 'tipos_licenca', true);
+  if fn_txt(d, 'descricao') is null then raise exception 'Informe a descrição do tipo de licença.'; end if;
+  if v_id is null then
+    insert into tipos_licenca (descricao, abona, ativo)
+    values (fn_txt(d, 'descricao'), coalesce((d ->> 'abona')::boolean, true), coalesce((d ->> 'ativo')::boolean, true))
+    returning id into v_id;
+  else
+    update tipos_licenca set descricao = fn_txt(d, 'descricao'), abona = coalesce((d ->> 'abona')::boolean, true),
+                             ativo = coalesce((d ->> 'ativo')::boolean, true)
+     where id = v_id;
+    if not found then raise exception 'Tipo de licença não encontrado.'; end if;
+  end if;
+  return jsonb_build_object('id', v_id);
+exception when unique_violation then
+  raise exception 'Já existe um tipo de licença com esta descrição.';
+end $$;
+
+create or replace function api_tipo_licenca_excluir(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare v_qtd int;
+begin
+  perform fn_auth(p_token, 'tipos_licenca', true);
+  select count(*) into v_qtd from ausencias where licenca_id = p_id;
+  if v_qtd > 0 then
+    raise exception 'Este tipo de licença já foi usado em % afastamento(s) e não pode ser excluído. Desative-o para que não apareça mais.', v_qtd;
+  end if;
+  delete from tipos_licenca where id = p_id;
+  if not found then raise exception 'Tipo de licença não encontrado.'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Quantas vezes o motivo foi usado (batidas, ajustes e solicitações)
+create or replace function fn_motivo_em_uso(p_id uuid)
+returns integer language sql stable set search_path = public as $$
+  select ((select count(*) from batidas where motivo_id = p_id)
+        + (select count(*) from batida_ajustes where motivo_id = p_id)
+        + (select count(*) from solicitacoes where motivo_id = p_id))::int;
+$$;
+
+create or replace function api_motivos_batida_listar(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'motivos_batida');
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('id', m.id, 'descricao', m.descricao, 'aplicacao', m.aplicacao, 'ativo', m.ativo,
+                                        'em_uso', fn_motivo_em_uso(m.id))
+                     order by m.ativo desc, m.descricao)
+      from motivos_batida m), '[]'::jsonb);
+end $$;
+
+create or replace function api_motivo_batida_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d jsonb := p_dados;
+  v_id uuid := nullif(d ->> 'id', '')::uuid;
+  v_apl text := coalesce(fn_txt(d, 'aplicacao'), 'ambos');
+begin
+  perform fn_auth(p_token, 'motivos_batida', true);
+  if fn_txt(d, 'descricao') is null then raise exception 'Informe a descrição do motivo.'; end if;
+  if v_apl not in ('inclusao', 'desconsideracao', 'ambos') then raise exception 'Escolha onde o motivo é usado.'; end if;
+  if v_id is null then
+    insert into motivos_batida (descricao, aplicacao, ativo)
+    values (fn_txt(d, 'descricao'), v_apl, coalesce((d ->> 'ativo')::boolean, true))
+    returning id into v_id;
+  else
+    update motivos_batida set descricao = fn_txt(d, 'descricao'), aplicacao = v_apl,
+                              ativo = coalesce((d ->> 'ativo')::boolean, true)
+     where id = v_id;
+    if not found then raise exception 'Motivo não encontrado.'; end if;
+  end if;
+  return jsonb_build_object('id', v_id);
+exception when unique_violation then
+  raise exception 'Já existe um motivo com esta descrição.';
+end $$;
+
+create or replace function api_motivo_batida_excluir(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare v_qtd int;
+begin
+  perform fn_auth(p_token, 'motivos_batida', true);
+  v_qtd := fn_motivo_em_uso(p_id);
+  if v_qtd > 0 then
+    raise exception 'Este motivo já foi usado em % lançamento(s) e não pode ser excluído. Desative-o para que não apareça mais.', v_qtd;
+  end if;
+  delete from motivos_batida where id = p_id;
+  if not found then raise exception 'Motivo não encontrado.'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- AFD — Arquivo Fonte de Dados do REP-P (Portaria MTP 671/2021, Anexo I, leiaute 003)
+--   tipo 1: cabeçalho (302 posições, com CRC-16/KERMIT)
+--   tipo 7: marcação de ponto do REP-P (137 posições, com hash SHA-256 encadeado)
+--   tipo 9: trailer (64 posições)
+-- Entram só as marcações registradas pelo sistema (com NSR). As batidas incluídas no tratamento não
+-- são marcações do REP e não entram; as desconsideradas entram (o registro original não muda).
+-- -----------------------------------------------------------------------------
+
+-- Texto só com caracteres imprimíveis ASCII (sem acentos), cortado/completado à direita com espaços
+create or replace function fn_afd_txt(p text, p_tam integer)
+returns text language sql immutable as $$
+  select rpad(left(regexp_replace(
+           translate(coalesce(p, ''), 'áàâãäéèêëíìîïóòôõöúùûüçñÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑºª',
+                                      'aaaaaeeeeiiiiooooouuuucnAAAAAEEEEIIIIOOOOOUUUUCNoa'),
+           '[^ -~]', ' ', 'g'), p_tam), p_tam, ' ');
+$$;
+
+-- Número à esquerda com zeros
+create or replace function fn_afd_num(p text, p_tam integer)
+returns text language sql immutable as $$
+  select lpad(right(regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g'), p_tam), p_tam, '0');
+$$;
+
+-- Data e hora no formato AAAA-MM-ddThh:mm:ss-ZZZZ, no fuso do sistema
+create or replace function fn_afd_dh(p timestamptz, p_segundos boolean default false)
+returns text language sql stable set search_path = public as $$
+  select to_char(p at time zone fn_fuso(), case when p_segundos then 'YYYY-MM-DD"T"HH24:MI:SS' else 'YYYY-MM-DD"T"HH24:MI:"00"' end)
+         || case when o < interval '0' then '-' else '+' end
+         || to_char(justify_hours(abs(extract(epoch from o))::int * interval '1 second'), 'HH24MI')
+    from (select (p at time zone fn_fuso()) - (p at time zone 'UTC') as o) x;
+$$;
+
+-- CRC-16/KERMIT (polinômio 0x1021 refletido, início 0) em 4 dígitos hexadecimais maiúsculos
+create or replace function fn_crc16_kermit(p text)
+returns text language plpgsql immutable as $$
+declare
+  v_crc integer := 0;
+  v_b   bytea := convert_to(p, 'UTF8');
+  i integer; k integer;
+begin
+  for i in 0 .. length(v_b) - 1 loop
+    v_crc := v_crc # get_byte(v_b, i);
+    for k in 1 .. 8 loop
+      if (v_crc & 1) = 1 then v_crc := (v_crc >> 1) # 33800;   -- 0x8408
+      else v_crc := v_crc >> 1; end if;
+    end loop;
+  end loop;
+  return upper(lpad(to_hex(v_crc), 4, '0'));
+end $$;
+
+-- p_dados: { inpi?: nº de registro do programa no INPI, desenvolvedor_doc?: CNPJ/CPF do desenvolvedor }
+create or replace function api_afd_gerar(p_token text, p_ini date, p_fim date, p_dados jsonb default '{}'::jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public, extensions as $$
+declare
+  v_emp   empresas%rowtype;
+  v_cab   text;
+  v_lin   text;
+  v_hash  text := '';
+  v_out   text[] := '{}';
+  v_qtd7  integer := 0;
+  v_dev   text := regexp_replace(coalesce(p_dados ->> 'desenvolvedor_doc', ''), '[^0-9]', '', 'g');
+  r       record;
+  v_crlf  text := chr(13) || chr(10);
+begin
+  perform fn_auth(p_token, 'afd');
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 366 then raise exception 'Selecione um período de até 1 ano.'; end if;
+  select * into v_emp from empresas where id = fn_empresa_atual();
+  if v_emp.id is null then select * into v_emp from empresas order by created_at limit 1; end if;
+  if v_emp.id is null or coalesce(v_emp.cnpj, '') = '' then
+    raise exception 'Informe o CNPJ da empresa (Configurações › Empresas) para gerar o AFD.';
+  end if;
+
+  v_cab := '000000000' || '1' || case when length(regexp_replace(v_emp.cnpj, '[^0-9]', '', 'g')) = 11 then '2' else '1' end
+        || fn_afd_num(v_emp.cnpj, 14)
+        || fn_afd_num('', 14)                                  -- CNO / CAEPF
+        || fn_afd_txt(v_emp.razao_social, 150)
+        || fn_afd_num(p_dados ->> 'inpi', 17)                  -- nº de registro do REP-P no INPI
+        || to_char(p_ini, 'YYYY-MM-DD') || to_char(p_fim, 'YYYY-MM-DD')
+        || fn_afd_dh(now())
+        || '003'
+        || case when length(v_dev) = 11 then '2' else '1' end
+        || fn_afd_num(v_dev, 14)
+        || fn_afd_txt('', 30);                                 -- modelo: em branco no REP-P
+  v_out := v_out || (v_cab || fn_crc16_kermit(v_cab));
+
+  for r in
+    select b.nsr, b.data_hora, b.created_at, b.origem, c.cpf
+      from batidas b
+      join colaboradores c on c.id = b.colaborador_id
+     where b.nsr is not null
+       and b.origem <> 'manual'
+       and (b.data_hora at time zone fn_fuso())::date between p_ini and p_fim
+       and (fn_empresa_atual() is null or c.empresa_id = fn_empresa_atual())
+     order by b.nsr
+  loop
+    v_lin := fn_afd_num(r.nsr::text, 9) || '7' || fn_afd_dh(r.data_hora) || fn_afd_num(r.cpf, 12)
+          || fn_afd_dh(r.created_at, true)
+          || case r.origem when 'mobile' then '01' when 'web' then '02' when 'relogio' then '04' else '05' end
+          || '0';                                               -- marcação online
+    v_hash := encode(digest(v_lin || v_hash, 'sha256'), 'hex');
+    v_out := v_out || (v_lin || v_hash);
+    v_qtd7 := v_qtd7 + 1;
+  end loop;
+
+  v_out := v_out || ('999999999' || repeat('000000000', 5) || fn_afd_num(v_qtd7::text, 9) || '9');
+  return jsonb_build_object(
+    'nome_arquivo', 'AFD' || fn_afd_num(p_dados ->> 'inpi', 17) || fn_afd_num(v_emp.cnpj, 14) || 'REP_P.txt',
+    'conteudo', array_to_string(v_out, v_crlf) || v_crlf,
+    'marcacoes', v_qtd7,
+    'empresa', coalesce(v_emp.nome_fantasia, v_emp.razao_social));
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -308,6 +562,22 @@ end $$;
 drop function if exists api_escala_salvar(text, jsonb);
 drop function if exists api_escala_excluir(text, jsonb);
 
+-- Confere um horário de escala de trabalho (entrada e saída obrigatórias, intervalo completo e por dentro)
+create or replace function fn_escala_validar_horario(p_ent time, p_si time, p_ri time, p_sai time, p_quando text default '')
+returns void language plpgsql immutable as $$
+begin
+  if p_ent is null or p_sai is null then raise exception 'Informe a entrada e a saída%.', p_quando; end if;
+  if (p_si is null) <> (p_ri is null) then
+    raise exception 'Informe a saída e o retorno do intervalo (ou deixe os dois em branco)%.', p_quando;
+  end if;
+  if p_ent = p_sai then raise exception 'A entrada e a saída não podem ser iguais%.', p_quando; end if;
+  if p_si is not null and
+     (fn_minutos(p_ent, p_si) + fn_minutos(p_si, p_ri) + fn_minutos(p_ri, p_sai) <> fn_minutos(p_ent, p_sai)
+      or p_si = p_ent or p_ri = p_si or p_sai = p_ri) then
+    raise exception 'Os horários do intervalo precisam ficar entre a entrada e a saída%.', p_quando;
+  end if;
+end $$;
+
 create or replace function fn_escala_lancamento_json(l escala_lancamentos)
 returns jsonb language sql stable set search_path = public as $$
   select jsonb_build_object(
@@ -315,12 +585,12 @@ returns jsonb language sql stable set search_path = public as $$
     'dias_semana', to_jsonb(l.dias_semana),
     'entrada', to_char(l.entrada, 'HH24:MI'), 'saida_intervalo', to_char(l.saida_intervalo, 'HH24:MI'),
     'retorno_intervalo', to_char(l.retorno_intervalo, 'HH24:MI'), 'saida', to_char(l.saida, 'HH24:MI'),
-    'observacao', l.observacao,
+    'observacao', l.observacao, 'horarios', l.horarios,
     'colaboradores', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'nome', c.nome, 'matricula', c.matricula)
                                                 order by c.nome)
                                  from colaboradores c where c.id = any(l.colaboradores) and fn_visivel(c.id)), '[]'::jsonb),
     'dias', (select count(*) from escalas e where e.lancamento_id = l.id),
-    'fechado', exists (select 1 from escalas e where e.lancamento_id = l.id and fn_periodo_fechado(e.data)),
+    'fechado', exists (select 1 from escalas e where e.lancamento_id = l.id and fn_periodo_fechado(e.data, e.colaborador_id)),
     'lancado_por', (select nome from usuarios where id = l.usuario_id), 'lancado_em', l.created_at,
     'alterado_por', (select nome from usuarios where id = l.alterado_por),
     'alterado_em', case when l.updated_at > l.created_at + interval '1 second' then l.updated_at end);
@@ -359,7 +629,8 @@ end $$;
 
 -- Cria ou altera uma escala.
 -- p_dados: { id?, nome, tipo: 'trabalho'|'folga', data_inicio, data_fim, dias_semana: [0..6], colaboradores: [uuid],
---            entrada?, saida_intervalo?, retorno_intervalo?, saida?, observacao? }
+--            entrada?, saida_intervalo?, retorno_intervalo?, saida?, observacao?,
+--            horarios?: { "AAAA-MM-DD": { tipo, entrada?, saida_intervalo?, retorno_intervalo?, saida? } } }
 create or replace function api_escala_lancamento_salvar(p_token text, p_dados jsonb)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
@@ -380,6 +651,8 @@ declare
   v_datas   date[];
   v_conf    record;
   v_qtd     integer;
+  v_hor     jsonb := '{}'::jsonb;
+  v_dia     record;
 begin
   if v_nome = '' then raise exception 'Dê um nome à escala (ex.: Plantão do feriado de novembro).'; end if;
   if v_tipo is null or v_tipo not in ('trabalho', 'folga') then raise exception 'Escolha se é escala de trabalho ou de folga.'; end if;
@@ -406,27 +679,44 @@ begin
                   select y from unnest(v_antigo.colaboradores) y where not fn_visivel(y))) x);
   end if;
 
+  select array_agg(g::date order by g) into v_datas
+    from generate_series(v_ini, v_fim, interval '1 day') g
+   where extract(dow from g)::smallint = any(v_dias);
+  if v_datas is null then raise exception 'Nenhum dia do período cai nos dias da semana marcados.'; end if;
+
+  -- Horário próprio de cada dia (só dos dias da escala; cada um conferido)
+  for v_dia in
+    select k::date as data, x.value as h
+      from jsonb_each(case when jsonb_typeof(d -> 'horarios') = 'object' then d -> 'horarios' else '{}' end) x(k, value)
+     where k::date = any(v_datas)
+     order by k
+  loop
+    if coalesce(v_dia.h ->> 'tipo', 'trabalho') = 'folga' then
+      v_hor := v_hor || jsonb_build_object(v_dia.data::text, jsonb_build_object('tipo', 'folga'));
+    else
+      perform fn_escala_validar_horario(fn_txt(v_dia.h, 'entrada')::time, fn_txt(v_dia.h, 'saida_intervalo')::time,
+                                        fn_txt(v_dia.h, 'retorno_intervalo')::time, fn_txt(v_dia.h, 'saida')::time,
+                                        ' em ' || to_char(v_dia.data, 'DD/MM/YYYY'));
+      v_hor := v_hor || jsonb_build_object(v_dia.data::text, jsonb_build_object(
+        'tipo', 'trabalho',
+        'entrada', to_char(fn_txt(v_dia.h, 'entrada')::time, 'HH24:MI'),
+        'saida_intervalo', to_char(fn_txt(v_dia.h, 'saida_intervalo')::time, 'HH24:MI'),
+        'retorno_intervalo', to_char(fn_txt(v_dia.h, 'retorno_intervalo')::time, 'HH24:MI'),
+        'saida', to_char(fn_txt(v_dia.h, 'saida')::time, 'HH24:MI')));
+    end if;
+  end loop;
+
+  -- O horário da escala é o padrão: obrigatório se algum dia de trabalho ficar sem horário próprio
   if v_tipo = 'trabalho' then
     v_ent := fn_txt(d, 'entrada')::time;
     v_si  := fn_txt(d, 'saida_intervalo')::time;
     v_ri  := fn_txt(d, 'retorno_intervalo')::time;
     v_sai := fn_txt(d, 'saida')::time;
-    if v_ent is null or v_sai is null then raise exception 'Informe a entrada e a saída da escala de trabalho.'; end if;
-    if (v_si is null) <> (v_ri is null) then
-      raise exception 'Informe a saída e o retorno do intervalo (ou deixe os dois em branco).';
-    end if;
-    if v_ent = v_sai then raise exception 'A entrada e a saída não podem ser iguais.'; end if;
-    if v_si is not null and
-       (fn_minutos(v_ent, v_si) + fn_minutos(v_si, v_ri) + fn_minutos(v_ri, v_sai) <> fn_minutos(v_ent, v_sai)
-        or v_si = v_ent or v_ri = v_si or v_sai = v_ri) then
-      raise exception 'Os horários do intervalo precisam ficar entre a entrada e a saída.';
+    if v_ent is not null or v_sai is not null
+       or exists (select 1 from unnest(v_datas) dt where not v_hor ? dt::text) then
+      perform fn_escala_validar_horario(v_ent, v_si, v_ri, v_sai, ' da escala de trabalho');
     end if;
   end if;
-
-  select array_agg(g::date order by g) into v_datas
-    from generate_series(v_ini, v_fim, interval '1 day') g
-   where extract(dow from g)::smallint = any(v_dias);
-  if v_datas is null then raise exception 'Nenhum dia do período cai nos dias da semana marcados.'; end if;
 
   -- Um colaborador só pode estar em uma escala por dia: avisa qual escala já ocupa o dia
   select c.nome as colaborador, e.data, l.nome as escala into v_conf
@@ -444,15 +734,16 @@ begin
 
   if v_id is null then
     insert into escala_lancamentos (nome, tipo, data_inicio, data_fim, dias_semana, entrada, saida_intervalo,
-                                    retorno_intervalo, saida, observacao, colaboradores, usuario_id)
+                                    retorno_intervalo, saida, observacao, colaboradores, usuario_id, horarios)
     values (v_nome, v_tipo, v_ini, v_fim, v_dias, v_ent, v_si, v_ri, v_sai, nullif(trim(fn_txt(d, 'observacao')), ''),
-            v_colabs, v_usuario)
+            v_colabs, v_usuario, v_hor)
     returning id into v_id;
   else
     update escala_lancamentos
        set nome = v_nome, tipo = v_tipo, data_inicio = v_ini, data_fim = v_fim, dias_semana = v_dias,
            entrada = v_ent, saida_intervalo = v_si, retorno_intervalo = v_ri, saida = v_sai,
-           observacao = nullif(trim(fn_txt(d, 'observacao')), ''), colaboradores = v_colabs, alterado_por = v_usuario
+           observacao = nullif(trim(fn_txt(d, 'observacao')), ''), colaboradores = v_colabs, alterado_por = v_usuario,
+           horarios = v_hor
      where id = v_id;
     -- Dias que saíram da escala (o trigger de fechamento impede mexer em período fechado)
     delete from escalas e
@@ -462,8 +753,15 @@ begin
 
   insert into escalas (colaborador_id, data, tipo, entrada, saida_intervalo, retorno_intervalo, saida, observacao,
                        usuario_id, lancamento_id)
-  select c, dt, v_tipo, v_ent, v_si, v_ri, v_sai, v_nome, v_usuario, v_id
+  select c, dt,
+         coalesce(h ->> 'tipo', v_tipo),
+         case when h is not null then (h ->> 'entrada')::time else v_ent end,
+         case when h is not null then (h ->> 'saida_intervalo')::time else v_si end,
+         case when h is not null then (h ->> 'retorno_intervalo')::time else v_ri end,
+         case when h is not null then (h ->> 'saida')::time else v_sai end,
+         v_nome, v_usuario, v_id
     from unnest(v_colabs) c cross join unnest(v_datas) dt
+    left join lateral (select v_hor -> dt::text as h) hh on true
   on conflict (colaborador_id, data) do update
      set tipo = excluded.tipo, entrada = excluded.entrada, saida_intervalo = excluded.saida_intervalo,
          retorno_intervalo = excluded.retorno_intervalo, saida = excluded.saida, observacao = excluded.observacao,
@@ -491,7 +789,7 @@ begin
   if exists (select 1 from unnest(l.colaboradores) x where not fn_visivel(x)) then
     raise exception 'A escala tem colaboradores fora da sua abrangência de acesso.' using errcode = '42501';
   end if;
-  if exists (select 1 from escalas e where e.lancamento_id = p_id and fn_periodo_fechado(e.data)) then
+  if exists (select 1 from escalas e where e.lancamento_id = p_id and fn_periodo_fechado(e.data, e.colaborador_id)) then
     raise exception 'A escala alcança um período fechado. Reabra o período para excluí-la.';
   end if;
   delete from escala_lancamentos where id = p_id;   -- os dias saem junto (on delete cascade)
@@ -547,7 +845,7 @@ begin
     raise exception 'Não é possível solicitar batida em data futura.';
   end if;
   if fn_txt(d, 'justificativa') is null then raise exception 'Descreva a justificativa da solicitação.'; end if;
-  if fn_periodo_fechado(v_data) then
+  if fn_periodo_fechado(v_data, v_colab) then
     raise exception 'O dia % está em um período fechado. Procure o RH.', to_char(v_data, 'DD/MM/YYYY');
   end if;
 
@@ -605,7 +903,7 @@ begin
       select jsonb_agg(fn_solicitacao_json(s)
                        || jsonb_build_object('colaborador', c.nome, 'matricula', c.matricula, 'departamento', d.nome,
                                              'batidas_dia', fn_batidas_json(c.id, s.data),
-                                             'fechado', fn_periodo_fechado(s.data))
+                                             'fechado', fn_periodo_fechado(s.data, s.colaborador_id))
                        order by s.created_at desc)
         from solicitacoes s
         join colaboradores c      on c.id = s.colaborador_id
@@ -683,7 +981,8 @@ begin
       select jsonb_agg(jsonb_build_object('id', f.id, 'data_inicio', f.data_inicio, 'data_fim', f.data_fim,
                                           'observacao', f.observacao, 'usuario', u.nome, 'created_at', f.created_at)
                        order by f.data_inicio desc)
-        from fechamentos f left join usuarios u on u.id = f.usuario_id), '[]'::jsonb));
+        from fechamentos f left join usuarios u on u.id = f.usuario_id
+       where f.empresa_id is null or fn_empresa_atual() is null or f.empresa_id = fn_empresa_atual()), '[]'::jsonb));
 end $$;
 
 -- Pendências que o DP deve tratar antes de fechar (como no Fortes: marcações ímpares,
@@ -699,7 +998,7 @@ begin
   create temp table _prev on commit drop as
     select a.*, c.nome, c.matricula from fn_apuracao(p_ini, least(p_fim, fn_hoje() - 1)) a
       join colaboradores c on c.id = a.colaborador_id
-     where fn_visivel(c.id);
+     where fn_visivel(c.id) and (fn_empresa_atual() is null or c.empresa_id = fn_empresa_atual());
 
   return jsonb_build_object(
     'resumo', jsonb_build_object(
@@ -709,7 +1008,8 @@ begin
       'sem_jornada', (select count(*) from pg_temp._prev where ocorrencia = 'sem_jornada'),
       'solicitacoes', (select count(*) from solicitacoes
                         where status = 'pendente' and data between p_ini and p_fim and fn_visivel(colaborador_id)),
-      'ja_fechado', exists (select 1 from fechamentos f where f.data_inicio <= p_fim and f.data_fim >= p_ini)),
+      'ja_fechado', exists (select 1 from fechamentos f where f.data_inicio <= p_fim and f.data_fim >= p_ini
+                               and fn_fechamento_da_empresa(f.empresa_id, null))),
     'pendencias', coalesce((
       select jsonb_agg(jsonb_build_object('colaborador_id', colaborador_id, 'nome', nome, 'matricula', matricula,
                                           'data', data, 'ocorrencia', ocorrencia, 'qtd_batidas', qtd_batidas)
@@ -726,14 +1026,15 @@ declare
 begin
   if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
   if p_fim >= fn_hoje() then raise exception 'Só é possível fechar dias já encerrados (até ontem).'; end if;
-  if exists (select 1 from fechamentos f where f.data_inicio <= p_fim and f.data_fim >= p_ini) then
-    raise exception 'Parte deste período já está fechada.';
+  if exists (select 1 from fechamentos f where f.data_inicio <= p_fim and f.data_fim >= p_ini
+              and fn_fechamento_da_empresa(f.empresa_id, null)) then
+    raise exception 'Parte deste período já está fechada nesta empresa.';
   end if;
 
   -- Consolida o banco de horas antes de congelar
   perform fn_processar_banco_horas(p_ini, p_fim);
-  insert into fechamentos (data_inicio, data_fim, observacao, usuario_id)
-  values (p_ini, p_fim, nullif(trim(p_observacao), ''), v_usuario)
+  insert into fechamentos (data_inicio, data_fim, observacao, usuario_id, empresa_id)
+  values (p_ini, p_fim, nullif(trim(p_observacao), ''), v_usuario, fn_empresa_atual())
   returning id into v_id;
   return jsonb_build_object('id', v_id);
 end $$;
@@ -743,8 +1044,10 @@ returns jsonb language plpgsql volatile security definer set search_path = publi
 declare f fechamentos%rowtype;
 begin
   perform fn_auth(p_token, 'fechamento', true);
-  delete from fechamentos where id = p_id returning * into f;
-  if f.id is null then raise exception 'Fechamento não encontrado.'; end if;
+  delete from fechamentos where id = p_id
+     and (empresa_id is null or fn_empresa_atual() is null or empresa_id = fn_empresa_atual())
+  returning * into f;
+  if f.id is null then raise exception 'Fechamento não encontrado nesta empresa.'; end if;
   -- Recalcula com as regras atuais o que ficou congelado
   perform fn_processar_banco_horas(f.data_inicio, f.data_fim);
   return jsonb_build_object('ok', true);
@@ -792,7 +1095,7 @@ begin
                'extra_min', a.extra_min, 'debito_min', a.debito_min, 'he_percentual', a.he_percentual::float8,
                'atraso_min', a.atraso_min, 'saida_antecipada_min', a.saida_antecipada_min,
                'noturno_min', a.noturno_reduzido_min, 'abonado_min', a.abonado_min,
-               'banco_horas', a.banco_horas, 'ocorrencia', a.ocorrencia,
+               'banco_horas', a.banco_horas, 'ocorrencia', a.ocorrencia, 'pre_assinalado', a.pre_assinalado,
                'observacao', coalesce(
                   (select au.justificativa from ausencias au
                     where au.colaborador_id = a.colaborador_id and a.data between au.data_inicio and au.data_fim
@@ -1046,12 +1349,24 @@ revoke execute on function fn_colaborador_do_usuario(uuid)                    fr
 revoke execute on function fn_solicitacao_json(solicitacoes)                  from public, anon, authenticated;
 revoke execute on function fn_espelho_colaborador(uuid, date, date)           from public, anon, authenticated;
 revoke execute on function fn_he_por_percentual(jsonb)                        from public, anon, authenticated;
+revoke execute on function fn_motivo_em_uso(uuid)                             from public, anon, authenticated;
+revoke execute on function fn_crc16_kermit(text)                              from public, anon, authenticated;
+revoke execute on function fn_afd_dh(timestamptz, boolean)                    from public, anon, authenticated;
+revoke execute on function fn_afd_txt(text, integer)                          from public, anon, authenticated;
+revoke execute on function fn_afd_num(text, integer)                          from public, anon, authenticated;
 
 grant execute on function api_filtros_auxiliares(text)                                 to anon, authenticated;
 grant execute on function api_feriados_listar(text, integer)                           to anon, authenticated;
 grant execute on function api_feriado_salvar(text, jsonb)                              to anon, authenticated;
 grant execute on function api_feriado_excluir(text, uuid)                              to anon, authenticated;
-grant execute on function api_ocorrencias_listar(text, date, date, uuid, uuid, text, uuid[])   to anon, authenticated;
+grant execute on function api_ocorrencias_listar(text, date, date, uuid, uuid, text, uuid[], text) to anon, authenticated;
+grant execute on function api_tipos_licenca_listar(text, boolean)                     to anon, authenticated;
+grant execute on function api_tipo_licenca_salvar(text, jsonb)                        to anon, authenticated;
+grant execute on function api_tipo_licenca_excluir(text, uuid)                        to anon, authenticated;
+grant execute on function api_motivos_batida_listar(text)                             to anon, authenticated;
+grant execute on function api_motivo_batida_salvar(text, jsonb)                       to anon, authenticated;
+grant execute on function api_motivo_batida_excluir(text, uuid)                       to anon, authenticated;
+grant execute on function api_afd_gerar(text, date, date, jsonb)                       to anon, authenticated;
 grant execute on function api_ocorrencia_salvar(text, jsonb)                           to anon, authenticated;
 grant execute on function api_ocorrencia_excluir(text, uuid)                           to anon, authenticated;
 grant execute on function api_escalas_grade(text, date, date, uuid, uuid, uuid[])              to anon, authenticated;
@@ -1151,6 +1466,72 @@ begin
          and (p_tipo is null or e.tipo = p_tipo)), '[]'::jsonb));
 end $$;
 
+-- Adicional noturno: dias com horas na faixa noturna da regra de cálculo (até 31 dias por consulta)
+create or replace function api_relatorio_noturno(
+  p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_departamento uuid default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'relatorio_noturno');
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 30 then raise exception 'Selecione um período de até 31 dias (um mês).'; end if;
+  return jsonb_build_object(
+    'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim),
+    'itens', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'colaborador_id', c.id, 'colaborador', c.nome, 'matricula', c.matricula, 'departamento', d.nome,
+               'data', a.data, 'horario', fn_horario_dia(c.id, a.data),
+               'trabalhado_min', a.trabalhado_min, 'noturno_min', a.noturno_min,
+               'noturno_reduzido_min', a.noturno_reduzido_min,
+               'percentual', coalesce(pe.percentual_noturno, 20)::float8,
+               'faixa', to_char(coalesce(pe.noturno_inicio, '22:00'), 'HH24:MI') || '–' || to_char(coalesce(pe.noturno_fim, '05:00'), 'HH24:MI'),
+               'reduzida', coalesce(pe.hora_noturna_reduzida, true))
+             order by c.nome, a.data)
+        from fn_apuracao(p_ini, least(p_fim, fn_hoje())) a
+        join colaboradores c          on c.id = a.colaborador_id
+        left join departamentos d     on d.id = c.departamento_id
+        left join perfis_eventos pe   on pe.id = fn_perfil_vigente(c.id, a.data)
+       where a.noturno_min > 0
+         and fn_visivel(c.id)
+         and (fn_empresa_atual() is null or c.empresa_id = fn_empresa_atual())
+         and fn_filtro_colaborador(c.id, null, p_colaboradores)
+         and (p_departamento is null or c.departamento_id = p_departamento)), '[]'::jsonb));
+end $$;
+
+-- Folgas: dias de folga da jornada, da escala ou lançados como ocorrência, e se houve trabalho (até 31 dias)
+create or replace function api_relatorio_folgas(
+  p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_departamento uuid default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'relatorio_folgas');
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 30 then raise exception 'Selecione um período de até 31 dias (um mês).'; end if;
+  return jsonb_build_object(
+    'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim),
+    'itens', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'colaborador_id', c.id, 'colaborador', c.nome, 'matricula', c.matricula, 'departamento', d.nome,
+               'data', a.data,
+               'origem', case when a.ocorrencia = 'ausencia:folga' then 'ocorrencia'
+                              when jd.escala = 'folga' then 'escala' else 'jornada' end,
+               'feriado', f.descricao,
+               'trabalhou', a.qtd_batidas > 0, 'trabalhado_min', a.trabalhado_min, 'extra_min', a.extra_min,
+               'he_percentual', a.he_percentual::float8,
+               'realizado', a.data < fn_hoje())
+             order by c.nome, a.data)
+        from fn_apuracao(p_ini, p_fim) a
+        join colaboradores c        on c.id = a.colaborador_id
+        left join departamentos d   on d.id = c.departamento_id
+        left join feriados f        on f.data = a.data
+        left join lateral fn_jornada_dia(c.id, a.data) jd on true
+       where (a.ocorrencia = 'ausencia:folga' or (coalesce(jd.folga, false) and a.jornada_id is not null))
+         and fn_visivel(c.id)
+         and (fn_empresa_atual() is null or c.empresa_id = fn_empresa_atual())
+         and fn_filtro_colaborador(c.id, null, p_colaboradores)
+         and (p_departamento is null or c.departamento_id = p_departamento)), '[]'::jsonb));
+end $$;
+
+grant execute on function api_relatorio_noturno(text, date, date, uuid[], uuid)         to anon, authenticated;
+grant execute on function api_relatorio_folgas(text, date, date, uuid[], uuid)          to anon, authenticated;
 grant execute on function api_relatorio_banco_horas(text, date, date, uuid[], uuid)     to anon, authenticated;
 grant execute on function api_relatorio_escalas(text, date, date, uuid[], uuid, text)    to anon, authenticated;
 
