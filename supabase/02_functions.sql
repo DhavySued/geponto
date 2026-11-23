@@ -743,7 +743,8 @@ dias as (
 ),
 base as (
   -- A escala do dia (tabela escalas) substitui o dia da jornada: 'trabalho' cria a previsão com os
-  -- horários dela, mesmo em folga ou feriado (o feriado deixa de valer para o colaborador nesse dia);
+  -- horários dela, mesmo em folga ou feriado (o feriado deixa de valer para o colaborador nesse dia: o
+  -- saldo é o trabalhado menos o previsto da escala, com o percentual de HE do dia da semana);
   -- 'folga' zera a previsão.
   select dd.colaborador_id, dd.data, dd.jornada_id,
          case when e.id is not null then e.tipo = 'folga' else jd.folga end as folga,
@@ -770,9 +771,6 @@ base as (
          coalesce(pe.bh_multiplicar, false) as bh_multiplicar,
          coalesce(ph.percentual, 50) as he_percentual,
          (f.id is not null and e.tipo is distinct from 'trabalho') as feriado,
-         -- Escalado para trabalhar no feriado: a previsão da escala vale (faltar é falta), mas todo o tempo
-         -- trabalhado é hora extra com o percentual de Feriado — pago em dobro (Súmula 146 do TST)
-         (f.id is not null and e.tipo = 'trabalho') as feriado_escalado,
          a.tipo as ausencia_tipo,
          coalesce(a.abona, false) as abona,
          coalesce(ap.minutos, 0) as abono_parcial,
@@ -789,7 +787,8 @@ base as (
     left join feriados f      on f.data = dd.data
     left join perfis_eventos pe on pe.id = dd.perfil_id
     left join perfil_evento_he ph on ph.perfil_id = dd.perfil_id
-                                 and ph.dia = case when f.id is not null then 7
+                                 -- escalado para trabalhar no feriado: o dia vale como dia normal da semana
+                                 and ph.dia = case when f.id is not null and e.tipo is distinct from 'trabalho' then 7
                                                    when coalesce(case when e.id is not null then e.tipo = 'folga'
                                                                       else jd.folga end, true) then 8
                                                    else extract(dow from dd.data)::int end
@@ -1004,7 +1003,6 @@ fin as (
          (r.previsto > 0 and r.qtd = 0 and not r.em_andamento and r.abonado < r.previsto) as e_falta,
          -- Turno incompleto (entrada sem saída ou vice-versa) não soma horas: o previsto dele vira débito
          case when r.em_andamento then 0
-              when r.feriado_escalado and r.qtd > 0 then r.trabalhado
               when abs(r.trabalhado + r.abonado - r.previsto) <= coalesce(r.tolerancia_diaria_min, 0) then 0
               else r.trabalhado + r.abonado - r.previsto end as saldo
     from res r
