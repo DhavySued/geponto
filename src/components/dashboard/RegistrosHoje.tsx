@@ -42,7 +42,7 @@ function Batidas({ batidas }: { batidas: RegistroHoje['batidas'] }) {
 
 /** Marcações previstas do dia, com o atraso da entrada */
 function Previstas({ r }: { r: RegistroHoje }) {
-  if (!r.previstas?.length) return <span className="text-xs text-slate-400">Sem previsão</span>;
+  if (!r.previstas?.length) return <span className="text-xs text-slate-400">{r.feriado ? 'Feriado' : 'Sem previsão'}</span>;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {r.previstas.map((p) => (

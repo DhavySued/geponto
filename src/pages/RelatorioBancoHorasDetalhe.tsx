@@ -80,7 +80,7 @@ export default function RelatorioBancoHorasDetalhe() {
       const base = [i.matricula, i.nome, i.departamento ?? ''];
       linhas.push([...base, '', '', '', 'Saldo anterior', '', '', '', '', '', '', m(i.saldo_anterior), i.saldo_anterior, ''].map(csv).join(';'));
       for (const d of diasDe(i)) {
-        linhas.push([...base, formatData(d.data, { day: '2-digit', month: '2-digit', year: 'numeric' }), d.previsto_min === 0 ? '' : d.horario ?? '',
+        linhas.push([...base, formatData(d.data, { day: '2-digit', month: '2-digit', year: 'numeric' }), d.horario === 'Feriado' ? 'Feriado' : d.previsto_min === 0 ? '' : d.horario ?? '',
           d.batidas.map((b) => `${siglaMarcacao(b.sentido, b.turno)} ${b.hora}${b.manual ? '*' : ''}`).join(' '),
           d.ocorrencia ? ocorrencia(d.ocorrencia).label : '', d.feriado ?? '',
           m(d.previsto_min), m(d.trabalhado_min), m(d.saldo_min), m(d.banco_min), m(ajustesDe(d)),
@@ -147,7 +147,7 @@ export default function RelatorioBancoHorasDetalhe() {
         <>
           <CabecalhoImpressao titulo="Detalhamento de banco de horas" periodo={consultado} />
           <p className="text-xs text-slate-500">
-            Batidas e apuração até o último dia encerrado. E1/S1/E2/S2 = entrada e saída de cada turno · * = batida incluída manualmente.
+            Batidas e apuração até {formatData(dados.periodo.apurado_ate)}. E1/S1/E2/S2 = entrada e saída de cada turno · * = batida incluída manualmente.
           </p>
           {visiveis.map((i) => <Colaborador key={i.colaborador_id} item={i} dias={diasDe(i)} />)}
         </>

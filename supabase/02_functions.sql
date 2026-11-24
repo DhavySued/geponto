@@ -478,10 +478,18 @@ returns text language sql immutable as $$
   select (p_min / 60) || 'h' || lpad((p_min % 60)::text, 2, '0');
 $$;
 
--- Horário previsto do colaborador em texto, já com a escala do dia (null = sem previsão)
+-- Feriado valendo para o colaborador no dia: não há previsão, a não ser com escala de trabalho lançada
+create or replace function fn_feriado_dia(p_colaborador uuid, p_data date)
+returns boolean language sql stable set search_path = public as $$
+  select exists (select 1 from feriados f where f.data = p_data)
+     and not exists (select 1 from escalas e where e.colaborador_id = p_colaborador and e.data = p_data and e.tipo = 'trabalho');
+$$;
+
+-- Horário previsto do colaborador em texto, já com a escala do dia ('Feriado' no feriado sem escala; null = sem previsão)
 create or replace function fn_horario_dia(p_colaborador uuid, p_data date)
 returns text language sql stable set search_path = public as $$
-  select case when jd.folga or jd.entrada is null then null
+  select case when fn_feriado_dia(p_colaborador, p_data) then 'Feriado'
+              when jd.folga or jd.entrada is null then null
               when jd.saida_intervalo is null
                 then to_char(jd.entrada, 'HH24:MI') || '–' || to_char(jd.saida, 'HH24:MI')
               when jd.intervalo_flexivel
@@ -544,6 +552,36 @@ begin
   end if;
   return v_id;
 end $$;
+
+-- Tipo de jornada deduzido dos dias, para as que não têm o tipo gravado (o que não casa vira tipo livre)
+create or replace function fn_jornada_modelo(p_jornada uuid)
+returns text language sql stable set search_path = public as $$
+  select case
+      when j.tipo = 'escala' then
+        case when x.padrao = 'TF' and x.brutos = 720 then case when x.noturna then '12x36n' else '12x36d' end
+             when x.padrao = 'TTTTTF'   then '5x1'
+             when x.padrao = 'TTTTTTFF' then '6x2'
+             when x.padrao = 'TTTTFF'   then '4x2'
+             else 'ciclo_livre' end
+      when x.trabalha = 0 then 'intermitente'
+      when x.trabalha = 5 and x.minutos = 2640 then '5x2_44'
+      when x.trabalha = 5 and x.minutos = 2400 then '5x2_40'
+      when x.trabalha = 6 and x.minutos = 2640 then '6x1_44'
+      when x.trabalha = 6 and x.minutos = 2160 then '6x1_36'
+      else 'semanal_livre' end
+    from jornadas j
+   cross join lateral (
+     select string_agg(case when d.folga then 'F' else 'T' end, '' order by d.dia_semana) as padrao,
+            count(*) filter (where not d.folga) as trabalha,
+            coalesce(sum(fn_minutos(d.entrada, d.saida)) filter (where not d.folga), 0) as brutos,
+            coalesce(sum(fn_minutos(d.entrada, d.saida)
+                         - coalesce(fn_minutos(d.saida_intervalo, d.retorno_intervalo), 0)) filter (where not d.folga), 0) as minutos,
+            coalesce(bool_or(d.saida < d.entrada), false) as noturna
+       from jornada_dias d where d.jornada_id = j.id) x
+   where j.id = p_jornada;
+$$;
+
+update jornadas set modelo = fn_jornada_modelo(id) where modelo is null;
 
 -- Minutos de relógio dentro da faixa noturna (padrão 22:00–05:00) entre dois instantes locais
 create or replace function fn_minutos_noturnos(p_ini timestamp, p_fim timestamp, p_n_ini time, p_n_fim time)
@@ -753,7 +791,8 @@ returns table (
 )
 language sql stable set search_path = public as $$
 with cfg as (
-  select fn_fuso() as tz, fn_hoje() as hoje
+  select fn_fuso() as tz, fn_hoje() as hoje,
+         coalesce((select banco_contabilizar from empresa where id = 1), 'fim_dia') = 'fim_turnos' as fim_turnos
 ),
 dias as (
   -- Jornada e regra de cálculo da situação vigente em cada dia
@@ -852,8 +891,10 @@ base as (
 ),
 -- Sentido efetivo de cada batida (fn_batidas_periodo: declarado pelo RH ou sequência automática).
 -- Inclui o dia anterior ao período para calcular a interjornada do primeiro dia.
+-- O cálculo usa o minuto cheio (08:05:40 vale 08:05, como aparece nas telas); os segundos só desempatam a ordem.
 bat as (
-  select bt.colaborador_id, bt.data_referencia, bt.data_hora, bt.sentido as sent, bt.turno as tur, false as virtual
+  select bt.colaborador_id, bt.data_referencia, date_trunc('minute', bt.data_hora) as data_hora, bt.data_hora as ord,
+         bt.sentido as sent, bt.turno as tur, false as virtual
     from fn_batidas_periodo(p_ini - 1, p_fim, p_colaborador) bt
    where bt.status = 'valida'
 ),
@@ -890,17 +931,17 @@ seq as (
     from (
       select * from bat
       union all
-      select p.colaborador_id, p.data, v.ts, v.sent, v.tur, true
+      select p.colaborador_id, p.data, v.ts, v.ts, v.sent, v.tur, true
         from pre p
        cross join lateral (values (p.si, 'S', 1), (p.ri, 'E', 2)) v(ts, sent, tur)
     ) x
-  window w2 as (partition by x.colaborador_id, x.data_referencia order by x.data_hora)
+  window w2 as (partition by x.colaborador_id, x.data_referencia order by x.ord)
 ),
 -- Pares entrada → saída do mesmo turno (turno só conta com as duas), com o descanso desde o par anterior
 pares as (
-  select p.*, p.ini - lag(p.fim) over (partition by p.colaborador_id, p.data_referencia order by p.ini) as pausa
+  select p.*, p.ini - lag(p.fim) over (partition by p.colaborador_id, p.data_referencia order by p.ord) as pausa
     from (
-      select s.colaborador_id, s.data_referencia, s.data_hora as ini, s.prox as fim, s.tur
+      select s.colaborador_id, s.data_referencia, s.data_hora as ini, s.prox as fim, s.tur, s.ord
         from seq s
        where s.sent = 'E' and s.prox_sent = 'S' and s.prox_tur = s.tur
     ) p
@@ -940,8 +981,8 @@ marc as (
          count(*)::int as qtd,
          min(s.data_hora) as primeira_ts,
          max(s.data_hora) as ultima_ts,
-         (array_agg(s.sent order by s.data_hora desc))[1] as ultimo_sentido,
-         (array_agg(s.tur order by s.data_hora))[1] as primeiro_tur,
+         (array_agg(s.sent order by s.ord desc))[1] as ultimo_sentido,
+         (array_agg(s.tur order by s.ord))[1] as primeiro_tur,
          bool_or(s.virtual) as pre_assinalado
     from seq s
    group by s.colaborador_id, s.data_referencia
@@ -950,7 +991,8 @@ marc_pares as (
   select p.colaborador_id, p.data_referencia as data,
          count(*)::int as pares,
          min(p.ini) as primeiro_ini,
-         (array_agg(p.tur order by p.ini))[1] as primeiro_tur,
+         (array_agg(p.tur order by p.ord))[1] as primeiro_tur,
+         max(p.tur) as ultimo_tur,
          sum(extract(epoch from greatest(p.fim_aj - p.ini_aj, interval '0')) / 60)::int as trabalhado,
          sum(fn_minutos_noturnos(p.ini at time zone cfg.tz, p.fim at time zone cfg.tz,
                                  coalesce(pe.noturno_inicio, '22:00'), coalesce(pe.noturno_fim, '05:00')))::int as noturno,
@@ -991,7 +1033,14 @@ calc as (
               else bs.data + bs.entrada end as entrada_turno,
          (m.ultima_ts at time zone cfg.tz) as ultima,
          (extract(epoch from m.primeira_ts - m.ultima_anterior) / 60)::int as interjornada,
-         (bs.data >= cfg.hoje) as em_andamento,
+         -- O dia de hoje fica em andamento até acabar ou, contabilizando na finalização dos turnos, até fechar o
+         -- último turno previsto (folga e feriado: qualquer turno) sem nenhuma batida em aberto
+         (bs.data > cfg.hoje
+          or (bs.data = cfg.hoje
+              and not (cfg.fim_turnos
+                       and coalesce(m.qtd, 0) > 0 and m.qtd = 2 * coalesce(mp.pares, 0)
+                       and mp.ultimo_tur >= case when bs.saida_intervalo is not null and not coalesce(bs.folga, true)
+                                                      and not bs.feriado and not bs.abona then 2 else 1 end))) as em_andamento,
          fn_periodo_fechado(bs.data, bs.colaborador_id) as fechado
     from base bs
    cross join cfg
@@ -1113,10 +1162,17 @@ returns text language sql immutable as $$
   select (abs(p_min) / 60)::text || 'h' || lpad((abs(p_min) % 60)::text, 2, '0');
 $$;
 
+-- Último dia que pode estar no banco: ontem ou, contabilizando na finalização dos turnos, hoje
+create or replace function fn_banco_ate()
+returns date language sql stable set search_path = public as $$
+  select fn_hoje() - case when (select banco_contabilizar from empresa where id = 1) = 'fim_turnos' then 0 else 1 end;
+$$;
+
 create or replace function fn_processar_banco_horas(p_ini date, p_fim date, p_colaborador uuid default null)
 returns integer language plpgsql volatile set search_path = public as $$
 declare
-  v_fim date := least(p_fim, fn_hoje() - 1);
+  -- Quem recalcula até ontem recalcula também hoje, quando o banco é contabilizado na finalização dos turnos
+  v_fim date := case when p_fim >= fn_hoje() - 1 then fn_banco_ate() else p_fim end;
   v_qtd integer;
 begin
   if p_ini > v_fim then
@@ -1172,16 +1228,25 @@ begin
     end if;
     update empresa set banco_horas_processado_ate = v_ontem where id = 1;
   end if;
+  -- Contabilizando na finalização dos turnos: mantém o dia de hoje igual à apuração
+  if fn_banco_ate() > v_ontem then
+    perform fn_processar_banco_horas(v_ontem + 1, v_ontem + 1, x.colaborador_id)
+       from (select a.colaborador_id
+               from fn_apuracao(v_ontem + 1, v_ontem + 1) a
+               left join banco_horas b on b.colaborador_id = a.colaborador_id and b.data = a.data and b.origem = 'automatico'
+              where not a.fechado
+                and coalesce(b.minutos, 0) <> case when a.banco_horas then a.banco_min else 0 end) x;
+  end if;
 end $$;
 
--- Batida incluída/alterada/removida em dia já encerrado → recalcula aquele dia
+-- Batida incluída/alterada/removida em dia já contabilizável → recalcula aquele dia
 create or replace function fn_batidas_reprocessar()
 returns trigger language plpgsql as $$
 begin
-  if tg_op in ('UPDATE', 'DELETE') and old.data_referencia < fn_hoje() then
+  if tg_op in ('UPDATE', 'DELETE') and old.data_referencia <= fn_banco_ate() then
     perform fn_processar_banco_horas(old.data_referencia, old.data_referencia, old.colaborador_id);
   end if;
-  if tg_op in ('INSERT', 'UPDATE') and new.data_referencia < fn_hoje()
+  if tg_op in ('INSERT', 'UPDATE') and new.data_referencia <= fn_banco_ate()
      and (tg_op = 'INSERT' or new.data_referencia is distinct from old.data_referencia
           or new.colaborador_id is distinct from old.colaborador_id
           or new.status is distinct from old.status or new.data_hora is distinct from old.data_hora
@@ -1216,10 +1281,10 @@ create trigger trg_ausencias_reprocessar after insert or update or delete on aus
 create or replace function fn_escalas_reprocessar()
 returns trigger language plpgsql as $$
 begin
-  if tg_op in ('UPDATE', 'DELETE') and old.data < fn_hoje() then
+  if tg_op in ('UPDATE', 'DELETE') and old.data <= fn_banco_ate() then
     perform fn_processar_banco_horas(old.data, old.data, old.colaborador_id);
   end if;
-  if tg_op in ('INSERT', 'UPDATE') and new.data < fn_hoje() then
+  if tg_op in ('INSERT', 'UPDATE') and new.data <= fn_banco_ate() then
     perform fn_processar_banco_horas(new.data, new.data, new.colaborador_id);
   end if;
   return null;
@@ -1433,7 +1498,8 @@ begin
         from (
           select c.id, c.nome, c.matricula, c.situacao,
                  d.nome as departamento, cg.nome as cargo,
-                 to_char(jd.entrada, 'HH24:MI') as entrada_prevista,
+                 a.feriado,
+                 case when not a.feriado then to_char(jd.entrada, 'HH24:MI') end as entrada_prevista,
                  -- Marcações previstas do dia (E1, S1, E2, S2); no intervalo flexível, só a duração
                  case when a.previsto_min > 0 and jd.entrada is not null then
                    (select coalesce(jsonb_agg(jsonb_build_object('sigla', v.sigla, 'hora', to_char(v.hora, 'HH24:MI'))
@@ -1444,7 +1510,7 @@ begin
                                    (4, case when jd.saida_intervalo is null then 'S1' else 'S2' end, jd.saida)) v(o, sigla, hora)
                      where v.hora is not null)
                  end as previstas,
-                 case when jd.intervalo_flexivel then fn_minutos(jd.saida_intervalo, jd.retorno_intervalo) end
+                 case when jd.intervalo_flexivel and not a.feriado then fn_minutos(jd.saida_intervalo, jd.retorno_intervalo) end
                    as intervalo_flexivel_min,
                  a.atraso_min,
                  -- Saldo do banco de horas até hoje (lançamentos automáticos e manuais)

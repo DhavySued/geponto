@@ -131,6 +131,8 @@ begin
       'batidas', fn_batidas_json(c.id, v_hoje),
       'jornada_dia', (
         select jsonb_build_object(
+                 'feriado', case when fn_feriado_dia(c.id, v_hoje)
+                                 then (select f.descricao from feriados f where f.data = v_hoje) end,
                  'folga', jd.folga,
                  'entrada', to_char(jd.entrada, 'HH24:MI'),
                  'saida_intervalo', to_char(jd.saida_intervalo, 'HH24:MI'),
@@ -445,6 +447,7 @@ end $$;
 -- Só turno completo (entrada e saída) soma horas; turno que não fechou entra com o previsto dele como débito.
 --   linhas  → marcação prevista e/ou batida realizada, com o que ela gerou:
 --             turno completo com previsão → entrada: previsto − realizado · saída: realizado − previsto
+--             (tolerância por batida: a marcação dentro dela conta como o horário previsto e não gera nada)
 --             turno completo sem previsão (folga, feriado, turno extra) → a saída gera o turno inteiro
 --   turnos  → previsto e trabalhado de cada turno; incompleto → gerou = −previsto do turno
 --   saldo_dia → o que a apuração mandou para o banco (ou para a folha), já com a tolerância diária
@@ -514,14 +517,14 @@ begin
      where a.previsto_min > 0 and v.hora is not null
       ) x;
 
-  -- Turnos do dia: previsto, realizado e se fechou (entrada e saída)
+  -- Turnos do dia: previsto, realizado (já com a tolerância por batida) e se fechou (entrada e saída)
   drop table if exists pg_temp._bh_tur;
   create temp table _bh_tur on commit drop as
     select k.colaborador_id, k.data, k.turno,
            coalesce((extract(epoch from ps.ts - pe.ts) / 60)::int, 0) as previsto_min,
-           be.local as e_real, bs.local as s_real,
            (be.local is not null and bs.local is not null) as completo,
-           coalesce((extract(epoch from bs.local - be.local) / 60)::int, 0) as trabalhado_min,
+           greatest(coalesce((extract(epoch from aj.s - aj.e) / 60)::int, 0), 0) as trabalhado_min,
+           aj.e as e_aj, aj.s as s_aj,
            pe.ts as e_prev, ps.ts as s_prev
       from (select colaborador_id, data, turno from _bh_prev
             union
@@ -533,7 +536,11 @@ begin
                             and b.turno = k.turno and b.sentido = 'E') be on true
       left join lateral (select min(b.local) as local from _bh_bat b
                           where b.colaborador_id = k.colaborador_id and b.data = k.data
-                            and b.turno = k.turno and b.sentido = 'S') bs on true;
+                            and b.turno = k.turno and b.sentido = 'S') bs on true
+      left join perfis_eventos pf on pf.id = fn_perfil_vigente(k.colaborador_id, k.data) and pf.tolerancia_modo = 'batida'
+     cross join lateral (
+       select case when abs(extract(epoch from be.local - pe.ts) / 60) <= pf.tolerancia_entrada_min then pe.ts else be.local end as e,
+              case when abs(extract(epoch from bs.local - ps.ts) / 60) <= pf.tolerancia_saida_min then ps.ts else bs.local end as s) aj;
 
   -- Linhas do dia: cada marcação prevista com a batida correspondente, mais as batidas sem previsão
   drop table if exists pg_temp._bh_lin;
@@ -589,8 +596,8 @@ begin
                                        'gerou_min', case
                                           when not t.completo or l.local is null then null
                                           when t.e_prev is not null and t.s_prev is not null then
-                                            case when l.sentido = 'E' then (extract(epoch from t.e_prev - l.local) / 60)::int
-                                                 else (extract(epoch from l.local - t.s_prev) / 60)::int end
+                                            case when l.sentido = 'E' then (extract(epoch from t.e_prev - t.e_aj) / 60)::int
+                                                 else (extract(epoch from t.s_aj - t.s_prev) / 60)::int end
                                           when l.sentido = 'S' then t.trabalhado_min
                                        end)
                                        order by l.turno, l.sentido, l.ordem)
@@ -761,6 +768,8 @@ revoke execute on function fn_jornada_vigente(uuid, date)               from pub
 revoke execute on function fn_inicio_controle(colaboradores)            from public, anon, authenticated;
 revoke execute on function fn_apuracao(date, date, uuid)                from public, anon, authenticated;
 revoke execute on function fn_processar_banco_horas(date, date, uuid)   from public, anon, authenticated;
+revoke execute on function fn_feriado_dia(uuid, date) from public, anon, authenticated;
+revoke execute on function fn_banco_ate() from public, anon, authenticated;
 revoke execute on function fn_banco_horas_atualizar()                   from public, anon, authenticated;
 
 grant execute on function api_meu_ponto(text)                           to anon, authenticated;

@@ -45,7 +45,7 @@ function PrevisaoHoje({
   previstoMin: number;
   saidaPrevista: Date | null;
 }) {
-  const marcas = !jd || jd.folga
+  const marcas = !jd || jd.folga || jd.feriado
     ? []
     : [
         { rotulo: 'Entrada', hora: jd.entrada },
@@ -63,7 +63,7 @@ function PrevisaoHoje({
         </span>
       </div>
       {marcas.length === 0 ? (
-        <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{jd?.folga ? 'Folga' : 'Sem jornada prevista'}</p>
+        <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{jd?.feriado ? `Feriado · ${jd.feriado}` : jd?.folga ? 'Folga' : 'Sem jornada prevista'}</p>
       ) : (
         <>
           <div className="mt-3 flex flex-wrap gap-2">

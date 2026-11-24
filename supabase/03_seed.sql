@@ -20,7 +20,7 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('colaboradores',      'Colaboradores',             'Cadastros',  20),
   ('situacoes_colaborador', 'Situação do Colaborador', 'Cadastros',  22),
   ('usuarios',           'Usuários & Permissões',     'Cadastros',  30),
-  ('jornadas',           'Jornadas e Escalas',        'Cadastros',  40),
+  ('jornadas',           'Jornadas',                  'Cadastros',  40),
   ('perfis_eventos',     'Regras de Cálculo',         'Cadastros',  42),
   ('feriados',           'Feriados',                  'Cadastros',  45),
   ('batidas',            'Acompanhamento de Batidas', 'Movimentos', 50),
@@ -53,7 +53,7 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('relatorio_vt',       'Relatório de VT',           'Relatórios', 89),
   ('relatorio_va',       'Relatório de VA',           'Relatórios', 89),
   ('empresas',           'Empresas',                  'Configurações', 90),
-  ('configuracoes',      'Registro de Ponto',         'Configurações', 92),
+  ('configuracoes',      'Ponto, Banco de Horas, VT e VA', 'Configurações', 92),
   ('config_dashboard',   'Dashboard',                 'Configurações', 93),
   ('integracoes',        'Integrações (API)',         'Configurações', 94),
   ('auditoria',          'Log e Auditoria',           'Configurações', 96)

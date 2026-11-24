@@ -193,7 +193,7 @@ export function MeuDashboard() {
                 {formatData(hojeIso, { weekday: 'long', day: '2-digit', month: 'long' })}
                 <span className="normal-case">
                   {' · '}
-                  {dados?.colaborador.horario_hoje ? `previsto ${dados.colaborador.horario_hoje}` : 'sem jornada prevista hoje'}
+                  {dados?.colaborador.horario_hoje === 'Feriado' ? 'feriado' : dados?.colaborador.horario_hoje ? `previsto ${dados.colaborador.horario_hoje}` : 'sem jornada prevista hoje'}
                 </span>
               </p>
             </div>

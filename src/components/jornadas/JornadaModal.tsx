@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { CalendarDays, CopyCheck, Repeat, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { AlertTriangle, CopyCheck, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
@@ -7,26 +7,23 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { formatData, formatMinutos, toISODate } from '@/lib/format';
 import {
-  diasDoModelo,
-  MODELOS_ESCALA,
+  diasDoTipo,
+  GRUPOS_TIPO_JORNADA,
+  TIPOS_JORNADA,
+  tipoDaJornada,
   minutosDia,
   novaJornada,
   redimensionarCiclo,
   rotuloDiaJornada,
 } from '@/lib/jornada';
 import { api } from '@/lib/api';
-import type { Jornada, JornadaDia, TipoJornada } from '@/lib/types';
+import type { Jornada, JornadaDia } from '@/lib/types';
 
 const CAMPOS_HORARIO: { chave: keyof Pick<JornadaDia, 'entrada' | 'saida_intervalo' | 'retorno_intervalo' | 'saida'>; label: string }[] = [
   { chave: 'entrada', label: 'Entrada' },
   { chave: 'saida_intervalo', label: 'Saída intervalo' },
   { chave: 'retorno_intervalo', label: 'Retorno' },
   { chave: 'saida', label: 'Saída' },
-];
-
-const TIPOS: { valor: TipoJornada; titulo: string; descricao: string; icon: typeof CalendarDays }[] = [
-  { valor: 'semanal', titulo: 'Semanal', descricao: 'Mesmo horário em cada dia da semana', icon: CalendarDays },
-  { valor: 'escala', titulo: 'Escala / revezamento', descricao: '12x36, 5x1, 6x2… o ciclo se repete', icon: Repeat },
 ];
 
 /** Próximas datas em que cada dia do ciclo cai (ajuda a conferir a data base). */
@@ -69,7 +66,7 @@ export function JornadaModal({
   const [salvando, setSalvando] = useState(false);
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
   // Texto digitado no ciclo: só é aplicado ao sair do campo, para dar para digitar "12" ou "30" sem
-  // que o "1" ou o "3" no meio do caminho redimensione a escala e apague os dias preenchidos
+  // que o "1" ou o "3" no meio do caminho redimensione o ciclo e apague os dias preenchidos
   const [cicloTexto, setCicloTexto] = useState('');
 
   useEffect(() => {
@@ -83,26 +80,29 @@ export function JornadaModal({
   const setDia = (dia: number, patch: Partial<JornadaDia>) =>
     setForm((f) => ({ ...f, dias: f.dias.map((d) => (d.dia_semana === dia ? { ...d, ...patch } : d)) }));
 
+  const tipo = tipoDaJornada(form);
   const escala = form.tipo === 'escala';
+  // Nos tipos de revezamento o ciclo e as folgas fazem parte do tipo; só o Ciclo livre os muda
+  const travado = escala && !tipo.livre;
   const ciclo = escala ? (form.ciclo_dias ?? form.dias.length) : 7;
 
   useEffect(() => {
     setCicloTexto(String(ciclo));
   }, [ciclo]);
 
-  const mudarTipo = (tipo: TipoJornada) => {
-    if (tipo === form.tipo) return;
-    if (tipo === 'escala') {
-      const dias = diasDoModelo('12x36d');
-      setForm((f) => ({ ...f, tipo, ciclo_dias: dias.length, data_base: f.data_base ?? toISODate(new Date()), dias }));
-    } else {
-      setForm((f) => ({ ...f, tipo, ciclo_dias: null, data_base: null, dias: novaJornada().dias }));
-    }
-  };
-
-  const aplicarModelo = (chave: string) => {
-    const dias = diasDoModelo(chave);
-    setForm((f) => ({ ...f, ciclo_dias: dias.length, dias }));
+  const mudarTipo = (chave: string) => {
+    const t = TIPOS_JORNADA.find((x) => x.chave === chave);
+    if (!t) return;
+    // Para o livre da mesma repetição, os horários já preenchidos continuam
+    const dias = t.livre && t.repete === form.tipo ? form.dias : diasDoTipo(t);
+    setForm((f) => ({
+      ...f,
+      modelo: t.chave,
+      tipo: t.repete,
+      dias,
+      ciclo_dias: t.repete === 'escala' ? dias.length : null,
+      data_base: t.repete === 'escala' ? (f.data_base ?? toISODate(new Date())) : null,
+    }));
   };
 
   const mudarCiclo = (n: number) => {
@@ -122,13 +122,21 @@ export function JornadaModal({
 
   const totalCiclo = form.dias.reduce((s, d) => s + minutosDia(d), 0);
   const mediaSemanal = escala ? Math.round((totalCiclo * 7) / ciclo) : totalCiclo;
+  const diasTrabalho = form.dias.filter((d) => !d.folga).length;
+  const avisos: string[] = [];
+  if (tipo.limiteSemana && mediaSemanal > tipo.limiteSemana) {
+    avisos.push(`Os horários somam ${formatMinutos(mediaSemanal)} por semana, acima das ${formatMinutos(tipo.limiteSemana)} deste tipo.`);
+  }
+  if (!tipo.livre && !escala && diasTrabalho !== tipo.dias.filter((d) => !d.folga).length) {
+    avisos.push(`Este tipo tem ${tipo.dias.filter((d) => !d.folga).length} dia(s) de trabalho por semana e há ${diasTrabalho} marcado(s).`);
+  }
   const ordemDias = escala ? Array.from({ length: ciclo }, (_, i) => i) : [1, 2, 3, 4, 5, 6, 0];
 
   const salvar = async () => {
     setErro(null);
     setSalvando(true);
     try {
-      await api('api_jornada_salvar', { p_dados: { ...form, ciclo_dias: escala ? ciclo : null } });
+      await api('api_jornada_salvar', { p_dados: { ...form, modelo: tipo.chave, ciclo_dias: escala ? ciclo : null } });
       toast(jornada?.id ? 'Jornada atualizada.' : 'Jornada cadastrada.');
       onSalvo();
     } catch (e) {
@@ -161,7 +169,7 @@ export function JornadaModal({
       onFechar={onFechar}
       largura="max-w-5xl"
       titulo={jornada?.id ? 'Editar jornada' : 'Nova jornada de trabalho'}
-      descricao="Defina os horários e a escala de trabalho."
+      descricao="Escolha o tipo e defina os horários."
       rodape={
         somenteLeitura ? (
           <Button variant="secondary" onClick={onFechar}>
@@ -217,75 +225,53 @@ export function JornadaModal({
               className="input"
               value={form.descricao ?? ''}
               onChange={(e) => set('descricao', e.target.value)}
-              placeholder="Observações sobre a escala (opcional)"
+              placeholder="Observações (opcional)"
             />
           </Field>
         </div>
 
-        {/* Tipo de jornada */}
-        <div className="grid gap-3 sm:grid-cols-2">
-          {TIPOS.map((t) => (
-            <button
-              key={t.valor}
-              type="button"
-              onClick={() => mudarTipo(t.valor)}
-              className={clsx(
-                'flex items-start gap-3 rounded-xl p-3.5 text-left ring-1 transition',
-                form.tipo === t.valor ? 'bg-primary-50 ring-2 ring-primary-600' : 'ring-slate-200 hover:bg-slate-50',
-              )}
-            >
-              <span
-                className={clsx(
-                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                  form.tipo === t.valor ? 'bg-primary-700 text-white' : 'bg-slate-100 text-slate-500',
-                )}
-              >
-                <t.icon className="h-4 w-4" />
-              </span>
-              <span>
-                <span className="block text-sm font-semibold text-slate-800">{t.titulo}</span>
-                <span className="block text-xs text-slate-500">{t.descricao}</span>
-              </span>
-            </button>
+        <section className="space-y-3 rounded-xl bg-slate-50/70 p-4 ring-1 ring-slate-200/80">
+          <div className={clsx('grid gap-4', escala && 'sm:grid-cols-[1fr_140px_180px]')}>
+            <Field label="Tipo de jornada" obrigatorio>
+              <select className="input" value={tipo.chave} onChange={(e) => mudarTipo(e.target.value)}>
+                {GRUPOS_TIPO_JORNADA.map((g) => (
+                  <optgroup key={g} label={g}>
+                    {TIPOS_JORNADA.filter((t) => t.grupo === g).map((t) => <option key={t.chave} value={t.chave}>{t.nome}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </Field>
+            {escala && (
+              <>
+                <Field label="Dias do ciclo" obrigatorio>
+                  <input type="number" min={2} max={60} className="input" value={cicloTexto} disabled={travado}
+                    onChange={(e) => setCicloTexto(e.target.value)}
+                    onBlur={() => mudarCiclo(Number(cicloTexto))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') mudarCiclo(Number(cicloTexto)); }} />
+                </Field>
+                <Field label="Dia 1 do ciclo em" obrigatorio dica="Data em que o ciclo começa">
+                  <input type="date" className="input" value={form.data_base ?? ''} onChange={(e) => set('data_base', e.target.value || null)} />
+                </Field>
+              </>
+            )}
+          </div>
+          <p className="text-xs text-slate-500">
+            {tipo.descricao}
+            {tipo.base && <span className="block text-slate-400">Base legal: {tipo.base}</span>}
+            {!somenteLeitura && <span className="block text-slate-400">Trocar o tipo preenche os horários sugeridos; ajuste depois se precisar.</span>}
+          </p>
+          {avisos.map((a) => (
+            <p key={a} className="flex items-start gap-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800 ring-1 ring-amber-200">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {a}
+            </p>
           ))}
-        </div>
-
-        {escala && (
-          <section className="rounded-xl bg-slate-50/70 p-4 ring-1 ring-slate-200/80">
-            <div className="grid gap-4 sm:grid-cols-[1fr_140px_180px]">
-              <Field label="Modelo" grupo dica="Preenche o ciclo com horários sugeridos; ajuste depois se precisar.">
-                <div className="flex flex-wrap gap-1.5">
-                  {MODELOS_ESCALA.map((m) => (
-                    <button
-                      key={m.chave}
-                      type="button"
-                      title={m.descricao}
-                      onClick={() => aplicarModelo(m.chave)}
-                      className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-medium text-primary-700 ring-1 ring-slate-200 transition hover:bg-primary-50"
-                    >
-                      {m.nome}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-              <Field label="Dias do ciclo" obrigatorio>
-                <input type="number" min={2} max={60} className="input" value={cicloTexto}
-                  onChange={(e) => setCicloTexto(e.target.value)}
-                  onBlur={() => mudarCiclo(Number(cicloTexto))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') mudarCiclo(Number(cicloTexto)); }} />
-              </Field>
-              <Field label="Dia 1 do ciclo em" obrigatorio dica="Data em que o ciclo começa">
-                <input type="date" className="input" value={form.data_base ?? ''} onChange={(e) => set('data_base', e.target.value || null)} />
-              </Field>
-            </div>
-          </section>
-        )}
+        </section>
 
         {/* Horários */}
         <section>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-slate-800">{escala ? 'Ciclo da escala' : 'Escala semanal'}</h3>
+              <h3 className="text-sm font-semibold text-slate-800">{escala ? 'Horários do ciclo' : 'Horários da semana'}</h3>
               <p className="text-xs text-slate-500">
                 {escala ? (
                   <>
@@ -344,6 +330,8 @@ export function JornadaModal({
                           type="button"
                           role="switch"
                           aria-checked={!d.folga}
+                          disabled={travado}
+                          title={travado ? 'Definido pelo tipo de jornada. Para mudar, use o Ciclo livre.' : undefined}
                           aria-label={`${rotulo} é dia de trabalho`}
                           onClick={() =>
                             setDia(i, d.folga
@@ -351,7 +339,7 @@ export function JornadaModal({
                               : { folga: true, dia_util: false, recebe_vt: false, recebe_va: false })
                           }
                           className={clsx(
-                            'relative inline-flex h-5 w-9 rounded-full transition',
+                            'relative inline-flex h-5 w-9 rounded-full transition disabled:cursor-not-allowed disabled:opacity-50',
                             d.folga ? 'bg-slate-200' : 'bg-primary-700',
                           )}
                         >

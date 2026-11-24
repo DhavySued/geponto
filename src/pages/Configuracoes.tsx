@@ -12,7 +12,8 @@ import type { Configuracoes as ConfiguracoesDados } from '@/lib/types';
 export default function Configuracoes() {
   const toast = useToast();
   const [dados, setDados] = useState<ConfiguracoesDados | null>(null);
-  const [form, setForm] = useState({ usar_limitacoes_ponto: false, bloquear_fora_cerca: false, beneficio_turnos: 'um' as 'um' | 'dois' });
+  const [form, setForm] = useState({ usar_limitacoes_ponto: false, bloquear_fora_cerca: false, beneficio_turnos: 'um' as 'um' | 'dois',
+    banco_contabilizar: 'fim_dia' as 'fim_dia' | 'fim_turnos' });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -21,7 +22,8 @@ export default function Configuracoes() {
       setErro(null);
       const d = await api<ConfiguracoesDados>('api_configuracoes');
       setDados(d);
-      setForm({ usar_limitacoes_ponto: d.usar_limitacoes_ponto, bloquear_fora_cerca: d.bloquear_fora_cerca, beneficio_turnos: d.beneficio_turnos ?? 'um' });
+      setForm({ usar_limitacoes_ponto: d.usar_limitacoes_ponto, bloquear_fora_cerca: d.bloquear_fora_cerca, beneficio_turnos: d.beneficio_turnos ?? 'um',
+        banco_contabilizar: d.banco_contabilizar ?? 'fim_dia' });
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao carregar as configurações.');
     }
@@ -32,7 +34,7 @@ export default function Configuracoes() {
   }, [carregar]);
 
   const alterado = !!dados && (form.usar_limitacoes_ponto !== dados.usar_limitacoes_ponto || form.bloquear_fora_cerca !== dados.bloquear_fora_cerca
-    || form.beneficio_turnos !== (dados.beneficio_turnos ?? 'um'));
+    || form.beneficio_turnos !== (dados.beneficio_turnos ?? 'um') || form.banco_contabilizar !== (dados.banco_contabilizar ?? 'fim_dia'));
 
   const salvar = async () => {
     setSalvando(true);
@@ -55,8 +57,8 @@ export default function Configuracoes() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Registro de ponto, VT e VA</h2>
-        <p className="mt-1 text-sm text-slate-500">Regras para o colaborador registrar o ponto pelo sistema (Meu Ponto e tela de login) e para contar os dias de VT e VA.</p>
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Ponto, banco de horas, VT e VA</h2>
+        <p className="mt-1 text-sm text-slate-500">Regras para o colaborador registrar o ponto pelo sistema (Meu Ponto e tela de login), para o banco de horas e para contar os dias de VT e VA.</p>
       </div>
 
       {erro && (
@@ -158,6 +160,28 @@ export default function Configuracoes() {
               )}
             </div>
           )}
+
+          <fieldset disabled={!dados.pode_editar} className="space-y-3 border-t border-slate-100 pt-4">
+            <h3 className="text-sm font-semibold text-slate-800">Contabilizar o banco de horas:</h3>
+            <div className="grid gap-3 md:grid-cols-2">
+              {([
+                ['fim_dia', 'Só quando acabar o dia', 'O saldo do dia entra no banco depois da meia-noite, com o dia encerrado.'],
+                ['fim_turnos', 'Na finalização dos turnos', 'O saldo entra assim que o colaborador fecha o último turno previsto. Se ele bater de novo, o saldo do dia sai e volta atualizado quando o novo turno fechar.'],
+              ] as const).map(([v, titulo, texto]) => (
+                <label key={v} className={opcao(form.banco_contabilizar === v)}>
+                  <input type="radio" name="banco" className="mt-1 accent-primary-700" checked={form.banco_contabilizar === v}
+                    onChange={() => setForm((f) => ({ ...f, banco_contabilizar: v }))} />
+                  <span>
+                    <span className="text-sm font-semibold text-slate-800">{titulo}</span>
+                    <span className="mt-1 block text-xs text-slate-500">{texto}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500">
+              Falta e turno que não fechou só entram no banco quando o dia acaba, nas duas opções.
+            </p>
+          </fieldset>
 
           <fieldset disabled={!dados.pode_editar} className="space-y-3 border-t border-slate-100 pt-4">
             <h3 className="text-sm font-semibold text-slate-800">Considerar VT ou VA quando:</h3>

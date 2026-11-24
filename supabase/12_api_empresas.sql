@@ -165,6 +165,7 @@ begin
             'usar_limitacoes_ponto', e.usar_limitacoes_ponto,
             'bloquear_fora_cerca', e.bloquear_fora_cerca,
             'beneficio_turnos', e.beneficio_turnos,
+            'banco_contabilizar', e.banco_contabilizar,
             'fuso_horario', e.fuso_horario,
             'empresas', coalesce((
               select jsonb_agg(jsonb_build_object(
@@ -183,11 +184,22 @@ begin
   if coalesce(fn_txt(p_dados, 'beneficio_turnos'), 'um') not in ('um', 'dois') then
     raise exception 'Opção inválida para VT e VA.';
   end if;
+  if coalesce(fn_txt(p_dados, 'banco_contabilizar'), 'fim_dia') not in ('fim_dia', 'fim_turnos') then
+    raise exception 'Opção inválida para o banco de horas.';
+  end if;
   update empresa set
     usar_limitacoes_ponto = coalesce((p_dados ->> 'usar_limitacoes_ponto')::boolean, usar_limitacoes_ponto),
     bloquear_fora_cerca = coalesce((p_dados ->> 'bloquear_fora_cerca')::boolean, bloquear_fora_cerca),
-    beneficio_turnos = coalesce(fn_txt(p_dados, 'beneficio_turnos'), beneficio_turnos)
+    beneficio_turnos = coalesce(fn_txt(p_dados, 'beneficio_turnos'), beneficio_turnos),
+    banco_contabilizar = coalesce(fn_txt(p_dados, 'banco_contabilizar'), banco_contabilizar)
    where id = 1;
+  -- Mudou para o fim do dia: o que já tinha entrado hoje sai (volta amanhã); para os turnos: entra o que já fechou
+  if fn_banco_ate() < fn_hoje() then
+    delete from banco_horas
+     where origem = 'automatico' and data >= fn_hoje() and not fn_periodo_fechado(data, colaborador_id);
+  else
+    perform fn_banco_horas_atualizar();
+  end if;
   return jsonb_build_object('ok', true);
 end $$;
 

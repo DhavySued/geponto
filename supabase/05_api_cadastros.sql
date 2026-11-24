@@ -646,7 +646,7 @@ begin
              || jsonb_build_object(
                   'colaboradores', (select count(*) from colaboradores c
                                      where c.jornada_id = j.id and c.situacao <> 'desligado'),
-                  -- Escala: média semanal (carga do ciclo × 7 / dias do ciclo)
+                  -- Por ciclo: média semanal (carga do ciclo × 7 / dias do ciclo)
                   'minutos_semana', coalesce(round((
                      select sum(fn_minutos(jd.entrada, jd.saida)
                                 - coalesce(fn_minutos(jd.saida_intervalo, jd.retorno_intervalo), 0))
@@ -680,6 +680,11 @@ declare
   v_tipo text := coalesce(fn_txt(d, 'tipo'), 'semanal');
   v_ciclo smallint := case when v_tipo = 'escala' then fn_txt(d, 'ciclo_dias')::smallint else 7 end;
   v_rotulo text;
+  -- Tipo de jornada: lista fixa do sistema (a mesma de src/lib/jornada.ts). Fora da lista, é deduzido dos dias.
+  v_modelo text := case when fn_txt(d, 'modelo') = any (
+    case when v_tipo = 'escala' then array['12x36d', '12x36n', '5x1', '6x2', '4x2', '12x24x12x48', 'turno_ininterrupto', 'ciclo_livre']
+         else array['5x2_44', '5x2_40', '6x1_44', '6x1_7h20', '6x1_36', 'bancario_30', 'parcial_30', 'parcial_26',
+                    'aprendiz_30', 'estagio_30', 'estagio_20', 'intermitente', 'semanal_livre'] end) then fn_txt(d, 'modelo') end;
 begin
   perform fn_auth(p_token, 'jornadas', true);
 
@@ -687,10 +692,10 @@ begin
   if v_tipo not in ('semanal', 'escala') then raise exception 'Tipo de jornada inválido.'; end if;
   if v_tipo = 'escala' then
     if coalesce(v_ciclo, 0) not between 2 and 60 then
-      raise exception 'O ciclo da escala deve ter de 2 a 60 dias (ex.: 12x36 = 2 dias).';
+      raise exception 'O ciclo da jornada deve ter de 2 a 60 dias (ex.: 12x36 = 2 dias).';
     end if;
     if fn_txt(d, 'data_base') is null then
-      raise exception 'Informe a data de início do ciclo (o dia 1 da escala).';
+      raise exception 'Informe a data de início do ciclo (o dia 1).';
     end if;
   end if;
   if jsonb_typeof(d -> 'dias') <> 'array' or jsonb_array_length(d -> 'dias') <> v_ciclo then
@@ -763,6 +768,8 @@ begin
     from jsonb_array_elements(d -> 'dias') x
    cross join lateral (select coalesce((x ->> 'folga')::boolean, false) as folga) f;
 
+  update jornadas set modelo = coalesce(v_modelo, fn_jornada_modelo(v_id)) where id = v_id;
+
   -- A apuração dos dias já encerrados muda com a jornada: recalcula o banco de horas de quem a usa
   perform fn_processar_banco_horas(least(c.data_admissao, coalesce(c.controle_ponto_inicio, c.data_admissao)),
                                    fn_hoje() - 1, c.id)
@@ -774,7 +781,7 @@ exception
   when unique_violation then
     raise exception 'Já existe uma jornada com este nome.';
   when check_violation then
-    raise exception 'Valores inválidos: confira o ciclo e a data de início da escala.';
+    raise exception 'Valores inválidos: confira o ciclo e a data de início.';
   when invalid_datetime_format or datetime_field_overflow then
     raise exception 'Horário inválido. Use o formato HH:MM.';
 end $$;
@@ -896,7 +903,8 @@ begin
   perform fn_processar_banco_horas(least(c.data_admissao, coalesce(c.controle_ponto_inicio, c.data_admissao)),
                                    fn_hoje() - 1, c.id)
      from colaboradores c
-    where c.perfil_evento_id = v_id;
+    where c.perfil_evento_id = v_id
+       or exists (select 1 from colaborador_situacoes s where s.colaborador_id = c.id and s.perfil_evento_id = v_id);
 
   return jsonb_build_object('id', v_id);
 exception
@@ -997,6 +1005,7 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+revoke execute on function fn_jornada_modelo(uuid)                          from public, anon, authenticated;
 grant execute on function api_tipos_beneficio_listar(text)                 to anon, authenticated;
 grant execute on function api_tipo_beneficio_salvar(text, jsonb)           to anon, authenticated;
 grant execute on function api_tipo_beneficio_excluir(text, uuid)           to anon, authenticated;

@@ -79,7 +79,7 @@ function Folha({ dados, e }: { dados: EspelhoPonto; e: EspelhoColaborador }) {
             {e.dias.map((d) => {
               const oc = ocorrencia(d.ocorrencia);
               return (
-                <tr key={d.data} className={clsx(!d.previsto && 'bg-slate-50/70 print:bg-transparent')}>
+                <tr key={d.data} className={clsx((!d.previsto || d.previsto === 'Feriado') && 'bg-slate-50/70 print:bg-transparent')}>
                   <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-700">
                     <span className="inline-block w-8 capitalize text-slate-400">{formatData(d.data, { weekday: 'short' }).replace('.', '')}</span>
                     {formatData(d.data)}

@@ -31,6 +31,8 @@ select j.id, d.dia, d.folga, d.ent::time, d.si::time, d.ri::time, d.sai::time, n
   ) as d(jornada, dia, folga, ent, si, ri, sai) on d.jornada = j.nome
 on conflict (jornada_id, dia_semana) do nothing;
 
+update jornadas set modelo = fn_jornada_modelo(id) where modelo is null;
+
 insert into departamentos (nome) values
   ('Administrativo'), ('Comercial'), ('Operações'), ('Tecnologia')
 on conflict (nome) do nothing;

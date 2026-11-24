@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatMinutos } from '@/lib/format';
-import { DIAS_CURTOS, horarioTexto, resumoEscala } from '@/lib/jornada';
+import { DIAS_CURTOS, horarioTexto, resumoEscala, tipoDaJornada } from '@/lib/jornada';
 import { api } from '@/lib/api';
 import type { Jornada } from '@/lib/types';
 
@@ -27,10 +27,10 @@ function JornadaCard({ j, onAbrir }: { j: Jornada; onAbrir: () => void }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-semibold text-slate-900">{j.nome}</p>
+          <p className="mt-0.5 text-xs font-medium text-primary-700">{tipoDaJornada(j).nome}{ehEscala && j.modelo === 'ciclo_livre' && ` · ${j.dias.length} dias`}</p>
           {j.descricao && <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{j.descricao}</p>}
         </div>
         <div className="flex shrink-0 gap-1.5">
-          {ehEscala && <Badge tone="violet" dot={false}>Escala {j.dias.length}d</Badge>}
           {j.intervalo_flexivel && <Badge tone="blue" dot={false}>Intervalo flexível</Badge>}
           {j.ativo ? <Badge tone="green">Ativa</Badge> : <Badge tone="slate">Inativa</Badge>}
         </div>
@@ -128,8 +128,8 @@ export default function Jornadas() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Jornadas e escalas</h2>
-          <p className="mt-1 text-sm text-slate-500">Horários das jornadas semanais e das escalas de revezamento (12x36, 5x1, 6x2…). As tolerâncias, extras e banco de horas ficam nas regras de cálculo.</p>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Jornadas</h2>
+          <p className="mt-1 text-sm text-slate-500">Horários de trabalho de cada tipo de jornada (5x2, 6x1, 12x36, ciclo livre…). Mudanças em dias específicos são lançadas em Escalas; tolerâncias, extras e banco de horas ficam nas regras de cálculo.</p>
         </div>
         {podeEditar && (
           <Button variant="accent" onClick={novo}>
@@ -155,7 +155,7 @@ export default function Jornadas() {
           <EmptyState
             icon={CalendarClock}
             titulo="Nenhuma jornada cadastrada"
-            descricao="Cadastre as escalas de trabalho da empresa. Depois é só vincular cada colaborador à sua jornada."
+            descricao="Cadastre as jornadas de trabalho da empresa. Depois é só vincular cada colaborador à sua jornada."
             acao={
               podeEditar && (
                 <Button variant="accent" onClick={novo}>

@@ -109,8 +109,8 @@ export const NAVEGACAO: NavGroup[] = [
       },
       {
         chave: 'jornadas',
-        titulo: 'Jornadas e Escalas',
-        descricao: 'Horários semanais e escalas 12x36 e de revezamento',
+        titulo: 'Jornadas',
+        descricao: 'Horários de trabalho por tipo de jornada: 5x2, 6x1, 12x36, ciclo livre…',
         path: '/cadastros/jornadas',
         icon: CalendarClock,
       },
@@ -362,8 +362,8 @@ export const NAVEGACAO: NavGroup[] = [
       },
       {
         chave: 'configuracoes',
-        titulo: 'Registro de Ponto, VT e VA',
-        descricao: 'Limitações para o registro de ponto (cerca virtual) e quando o dia conta para VT e VA',
+        titulo: 'Ponto, Banco de Horas, VT e VA',
+        descricao: 'Cerca virtual, quando o saldo entra no banco de horas e quando o dia conta para VT e VA',
         path: '/configuracoes/registro-ponto',
         icon: Fingerprint,
       },

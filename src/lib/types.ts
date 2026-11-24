@@ -127,6 +127,8 @@ export interface Configuracoes {
   bloquear_fora_cerca: boolean;
   /** Quando o dia conta para VT/VA: um turno trabalhado ou os dois */
   beneficio_turnos: 'um' | 'dois';
+  /** Quando o saldo do dia entra no banco de horas */
+  banco_contabilizar?: 'fim_dia' | 'fim_turnos';
   fuso_horario: string;
   empresas: { id: string; nome: string; tem_local: boolean; raio_m: number | null }[];
 }
@@ -156,6 +158,8 @@ export interface RegistroHoje {
   departamento: string | null;
   cargo: string | null;
   entrada_prevista: string | null;
+  /** Feriado sem escala de trabalho */
+  feriado?: boolean;
   /** Marcações previstas do dia (E1, S1, E2, S2); null sem previsão */
   previstas: { sigla: string; hora: string }[] | null;
   /** Jornada com intervalo flexível: duração do intervalo */
@@ -447,8 +451,10 @@ export interface Jornada {
   id?: string;
   nome: string;
   descricao: string | null;
-  /** semanal: dias 0–6 (domingo = 0) · escala: dias do ciclo 0…ciclo_dias-1 a partir de data_base */
+  /** Como os dias se repetem — semanal: dias 0–6 (domingo = 0) · escala: ciclo 0…ciclo_dias-1 a partir de data_base */
   tipo: TipoJornada;
+  /** Tipo de jornada (TIPOS_JORNADA) */
+  modelo?: string | null;
   ciclo_dias: number | null;
   data_base: string | null;
   ativo: boolean;
@@ -568,6 +574,8 @@ export interface MeuPontoData {
     qtd_batidas: number;
     batidas: BatidaResumo[];
     jornada_dia: {
+      /** Nome do feriado (sem escala de trabalho no dia) */
+      feriado?: string | null;
       folga: boolean;
       entrada: string | null;
       saida_intervalo: string | null;

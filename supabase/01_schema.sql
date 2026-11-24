@@ -705,7 +705,7 @@ create trigger trg_colaboradores_historico after insert or update on colaborador
   for each row execute function fn_colaborador_historico();
 
 -- -----------------------------------------------------------------------------
--- Escalas (padrão Fortes Ponto)
+-- Como os dias da jornada se repetem
 --   tipo = 'semanal' → jornada_dias.dia_semana é o dia da semana (0 = domingo)
 --   tipo = 'escala'  → jornada_dias.dia_semana é o dia do ciclo (0 … ciclo_dias-1),
 --                      contado a partir de data_base (ex.: 12x36 = ciclo de 2 dias)
@@ -713,6 +713,10 @@ create trigger trg_colaboradores_historico after insert or update on colaborador
 alter table jornadas add column if not exists tipo                   text not null default 'semanal';
 alter table jornadas add column if not exists ciclo_dias             smallint;
 alter table jornadas add column if not exists data_base              date;
+
+-- Tipo de jornada (lista fixa do sistema, ver TIPOS_JORNADA em src/lib/jornada.ts): 5x2, 6x1, 12x36, ciclo livre…
+-- "tipo" continua dizendo só como os dias se repetem: por semana ou por ciclo.
+alter table jornadas add column if not exists modelo text;
 
 -- Intervalo flexível: a saída e o retorno do intervalo não precisam bater nos horários da jornada.
 -- Vale a duração (retorno − saída do intervalo previstos): o retorno esperado é a saída real + a duração.
@@ -1080,6 +1084,11 @@ end $$;
 -- Quando o dia conta para VT/VA: 'um' turno trabalhado ou os 'dois' turnos
 alter table empresa add column if not exists beneficio_turnos text not null default 'um'
   check (beneficio_turnos in ('um', 'dois'));
+
+-- Quando o saldo do dia entra no banco de horas: 'fim_dia' (só no dia seguinte) ou 'fim_turnos'
+-- (assim que o colaborador fecha os turnos do dia)
+alter table empresa add column if not exists banco_contabilizar text not null default 'fim_dia'
+  check (banco_contabilizar in ('fim_dia', 'fim_turnos'));
 
 -- Colaboradores que já existiam: uma situação na admissão e uma a cada troca de jornada já
 -- registrada; a situação atual (férias, afastado) entra na data em que passou a valer.

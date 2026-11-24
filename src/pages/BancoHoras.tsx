@@ -175,7 +175,7 @@ function Min({ min, className }: { min: number | null; className?: string }) {
 function notaDoDia(d: BancoHorasDia): string | null {
   const soma = (d.turnos ?? []).reduce((s, t) => s + t.gerou_min, 0);
   const partes: string[] = [];
-  if (d.ocorrencia === 'em_andamento') partes.push('Dia em andamento: o saldo é apurado no fim do dia');
+  if (d.ocorrencia === 'em_andamento') partes.push('Dia em andamento: o saldo entra no fim do dia ou na finalização dos turnos, conforme a configuração');
   else if (d.saldo_dia === 0 && soma !== 0) partes.push('Dentro da tolerância diária');
   if (d.falta_folha) partes.push('Falta levada para a folha: não foi debitada do banco e vai no arquivo da folha como 1 dia de falta');
   else if (d.saldo_dia !== 0 && !d.vai_para_banco) partes.push('Saldo vai para a folha (jornada sem banco de horas)');

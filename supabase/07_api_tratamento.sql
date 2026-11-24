@@ -235,7 +235,7 @@ begin
                                   least(p_fim, coalesce(c.data_desligamento, p_fim)), interval '1 day') g
         left join lateral fn_jornada_dia(c.id, g::date) jd on true
         left join jornadas j on j.id = jd.jornada_id
-        left join perfis_eventos pe on pe.id = c.perfil_evento_id
+        left join perfis_eventos pe on pe.id = fn_perfil_vigente(c.id, g::date)
         left join feriados f on f.data = g::date
         left join lateral (
           select au.tipo
@@ -262,7 +262,7 @@ begin
          ('E', 2, d.retorno_intervalo),
          ('S', 2, case when d.saida_intervalo is not null then d.saida end)
        ) m(sentido, turno, hora)
-       where not coalesce(d.folga, true) and d.entrada is not null and m.hora is not null
+       where not coalesce(d.folga, true) and not d.feriado and d.entrada is not null and m.hora is not null
     ),
     bat as (
       select b.*, (b.data_hora at time zone v_tz) as local
@@ -421,6 +421,10 @@ begin
   if not found or coalesce(jd.folga, true) or jd.entrada is null then
     return jsonb_build_object('previstas', '[]'::jsonb, 'sugestao', null,
                               'folga', coalesce(jd.folga, true));
+  end if;
+  -- Feriado sem escala de trabalho: nada previsto para sugerir
+  if fn_feriado_dia(p_colaborador, p_data) then
+    return jsonb_build_object('previstas', '[]'::jsonb, 'sugestao', null, 'folga', false, 'feriado', true);
   end if;
 
   drop table if exists pg_temp._sug_bat;

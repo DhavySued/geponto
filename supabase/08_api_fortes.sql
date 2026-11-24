@@ -1438,7 +1438,7 @@ create or replace function api_relatorio_banco_horas_detalhe(
   p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_departamento uuid default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
-  v_ate date := least(p_fim, fn_hoje() - 1);
+  v_ate date := least(p_fim, fn_banco_ate());
   v_tz  text := fn_fuso();
   v_um  uuid := case when cardinality(p_colaboradores) = 1 then p_colaboradores[1] end;
 begin
