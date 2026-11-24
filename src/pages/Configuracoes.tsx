@@ -12,7 +12,7 @@ import type { Configuracoes as ConfiguracoesDados } from '@/lib/types';
 export default function Configuracoes() {
   const toast = useToast();
   const [dados, setDados] = useState<ConfiguracoesDados | null>(null);
-  const [form, setForm] = useState({ usar_limitacoes_ponto: false, bloquear_fora_cerca: false });
+  const [form, setForm] = useState({ usar_limitacoes_ponto: false, bloquear_fora_cerca: false, beneficio_turnos: 'um' as 'um' | 'dois' });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -21,7 +21,7 @@ export default function Configuracoes() {
       setErro(null);
       const d = await api<ConfiguracoesDados>('api_configuracoes');
       setDados(d);
-      setForm({ usar_limitacoes_ponto: d.usar_limitacoes_ponto, bloquear_fora_cerca: d.bloquear_fora_cerca });
+      setForm({ usar_limitacoes_ponto: d.usar_limitacoes_ponto, bloquear_fora_cerca: d.bloquear_fora_cerca, beneficio_turnos: d.beneficio_turnos ?? 'um' });
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao carregar as configurações.');
     }
@@ -31,13 +31,14 @@ export default function Configuracoes() {
     carregar();
   }, [carregar]);
 
-  const alterado = !!dados && (form.usar_limitacoes_ponto !== dados.usar_limitacoes_ponto || form.bloquear_fora_cerca !== dados.bloquear_fora_cerca);
+  const alterado = !!dados && (form.usar_limitacoes_ponto !== dados.usar_limitacoes_ponto || form.bloquear_fora_cerca !== dados.bloquear_fora_cerca
+    || form.beneficio_turnos !== (dados.beneficio_turnos ?? 'um'));
 
   const salvar = async () => {
     setSalvando(true);
     try {
       await api('api_configuracoes_salvar', { p_dados: form });
-      toast('Configurações salvas. Valem a partir da próxima batida.');
+      toast('Configurações salvas.');
       carregar();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Erro ao salvar.', 'erro');
@@ -54,8 +55,8 @@ export default function Configuracoes() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Registro de ponto</h2>
-        <p className="mt-1 text-sm text-slate-500">Regras para o colaborador registrar o ponto pelo sistema (Meu Ponto e tela de login).</p>
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Registro de ponto, VT e VA</h2>
+        <p className="mt-1 text-sm text-slate-500">Regras para o colaborador registrar o ponto pelo sistema (Meu Ponto e tela de login) e para contar os dias de VT e VA.</p>
       </div>
 
       {erro && (
@@ -157,6 +158,28 @@ export default function Configuracoes() {
               )}
             </div>
           )}
+
+          <fieldset disabled={!dados.pode_editar} className="space-y-3 border-t border-slate-100 pt-4">
+            <h3 className="text-sm font-semibold text-slate-800">Considerar VT ou VA quando:</h3>
+            <div className="grid gap-3 md:grid-cols-2">
+              {([
+                ['um', 'Trabalhar um turno', 'Basta um turno completo (entrada e saída) no dia.'],
+                ['dois', 'Trabalhar os dois turnos', 'Precisa dos dois turnos completos. Em dia previsto com um turno só, basta ele.'],
+              ] as const).map(([v, titulo, texto]) => (
+                <label key={v} className={opcao(form.beneficio_turnos === v)}>
+                  <input type="radio" name="beneficio" className="mt-1 accent-primary-700" checked={form.beneficio_turnos === v}
+                    onChange={() => setForm((f) => ({ ...f, beneficio_turnos: v }))} />
+                  <span>
+                    <span className="text-sm font-semibold text-slate-800">{titulo}</span>
+                    <span className="mt-1 block text-xs text-slate-500">{texto}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500">
+              Vale para os dias marcados com VT ou VA na jornada, de quem recebe o benefício, nos Relatórios de VT e de VA.
+            </p>
+          </fieldset>
 
           {dados.pode_editar && (
             <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">

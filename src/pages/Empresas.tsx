@@ -240,7 +240,7 @@ function EmpresaModal({
               <h3 className="text-sm font-semibold text-slate-800">Local de ponto</h3>
               <p className="text-xs text-slate-500">
                 Ponto de referência e raio permitido para as batidas desta empresa (cerca virtual).
-                {!usarLimitacoes && ' As limitações estão desligadas em Configurações › Registro de Ponto: a localização fica guardada, mas não é conferida.'}
+                {!usarLimitacoes && ' As limitações estão desligadas em Configurações › Registro de Ponto, VT e VA: a localização fica guardada, mas não é conferida.'}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

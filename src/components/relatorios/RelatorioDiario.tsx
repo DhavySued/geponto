@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { AlertTriangle, Download, Printer, Search, type LucideIcon } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
+import { CabecalhoImpressao, useCabecalhoCsv } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -41,6 +41,7 @@ export function RelatorioDiario<T extends { colaborador_id: string; colaborador:
 }) {
   const MAX_DIAS = maxDias;
   const { aux, erro: erroAux } = useFiltrosAux();
+  const cabecalhoCsv = useCabecalhoCsv();
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [dados, setDados] = useState<RelatorioPeriodo<T> | null>(null);
@@ -79,6 +80,8 @@ export function RelatorioDiario<T extends { colaborador_id: string; colaborador:
     }
   };
 
+  // Período do que está na tela (os campos podem ter mudado depois da consulta)
+  const consultado = dados ? { ini: dados.periodo.inicio, fim: dados.periodo.fim } : periodo;
   const itens = dados?.itens ?? [];
   const exportar = () => {
     const linhas = [
@@ -86,12 +89,12 @@ export function RelatorioDiario<T extends { colaborador_id: string; colaborador:
       ...itens.map((i) => [i.matricula, i.colaborador, i.departamento ?? '', formatData(i.data), ...colunas.map((c) => c.csv(i))]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')),
     ];
-    baixarArquivo(`${arquivo}_${periodo.ini}_${periodo.fim}.csv`, linhas.join('\r\n'), 'text/csv');
+    baixarArquivo(`${arquivo}_${consultado.ini}_${consultado.fim}.csv`, [...cabecalhoCsv(titulo, consultado), ...linhas].join('\r\n'), 'text/csv');
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">{titulo}</h2>
           <p className="mt-1 text-sm text-slate-500">{descricao}</p>
@@ -138,7 +141,7 @@ export function RelatorioDiario<T extends { colaborador_id: string; colaborador:
         <div className="card"><EmptyState icon={icon} titulo={vazio} descricao="Não há registros com esses filtros." /></div>
       ) : (
         <>
-          <CabecalhoImpressao titulo={titulo} periodo={periodo} />
+          <CabecalhoImpressao titulo={titulo} periodo={consultado} />
           {resumo && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {resumo(itens).map(([t, v]) => (

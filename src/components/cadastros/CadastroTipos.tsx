@@ -25,6 +25,7 @@ export interface ItemTipo {
  */
 export function CadastroTipos<T extends ItemTipo>({
   pagina, titulo, descricao, icon, nomeItem, rpc, novo, colunas, campos,
+  rotuloDescricao = 'Descrição', rotuloUso = 'Lançamentos',
 }: {
   pagina: PaginaChave;
   titulo: string;
@@ -32,6 +33,9 @@ export function CadastroTipos<T extends ItemTipo>({
   icon: LucideIcon;
   /** "tipo de licença", "motivo" */
   nomeItem: string;
+  rotuloDescricao?: string;
+  /** Título da coluna de quantas vezes foi usado */
+  rotuloUso?: string;
   rpc: { listar: string; salvar: string; excluir: string };
   novo: () => T;
   /** Colunas extras da tabela */
@@ -120,9 +124,9 @@ export function CadastroTipos<T extends ItemTipo>({
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-slate-50/70 text-left text-xs text-slate-400">
-                <th className="px-5 py-2.5 font-medium">Descrição</th>
+                <th className="px-5 py-2.5 font-medium">{rotuloDescricao}</th>
                 {colunas?.map((c) => <th key={c.titulo} className="px-5 py-2.5 font-medium">{c.titulo}</th>)}
-                <th className="px-5 py-2.5 font-medium">Lançamentos</th>
+                <th className="px-5 py-2.5 font-medium">{rotuloUso}</th>
                 <th className="px-5 py-2.5 font-medium">Situação</th>
                 <th className="w-28 px-3 py-2.5" />
               </tr>
@@ -180,7 +184,7 @@ export function CadastroTipos<T extends ItemTipo>({
         {modal && (
           <fieldset disabled={!podeEditar} className="space-y-4">
             <AlertaErro mensagem={erroModal} />
-            <Field label="Descrição" obrigatorio>
+            <Field label={rotuloDescricao} obrigatorio>
               <input className="input" value={modal.descricao} autoFocus onChange={(e) => set('descricao', e.target.value)} />
             </Field>
             {campos?.(modal, set)}

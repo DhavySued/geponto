@@ -164,6 +164,7 @@ begin
             'pode_editar', fn_pode(v_usuario, 'configuracoes', true),
             'usar_limitacoes_ponto', e.usar_limitacoes_ponto,
             'bloquear_fora_cerca', e.bloquear_fora_cerca,
+            'beneficio_turnos', e.beneficio_turnos,
             'fuso_horario', e.fuso_horario,
             'empresas', coalesce((
               select jsonb_agg(jsonb_build_object(
@@ -179,9 +180,13 @@ create or replace function api_configuracoes_salvar(p_token text, p_dados jsonb)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 begin
   perform fn_auth(p_token, 'configuracoes', true);
+  if coalesce(fn_txt(p_dados, 'beneficio_turnos'), 'um') not in ('um', 'dois') then
+    raise exception 'Opção inválida para VT e VA.';
+  end if;
   update empresa set
     usar_limitacoes_ponto = coalesce((p_dados ->> 'usar_limitacoes_ponto')::boolean, usar_limitacoes_ponto),
-    bloquear_fora_cerca = coalesce((p_dados ->> 'bloquear_fora_cerca')::boolean, bloquear_fora_cerca)
+    bloquear_fora_cerca = coalesce((p_dados ->> 'bloquear_fora_cerca')::boolean, bloquear_fora_cerca),
+    beneficio_turnos = coalesce(fn_txt(p_dados, 'beneficio_turnos'), beneficio_turnos)
    where id = 1;
   return jsonb_build_object('ok', true);
 end $$;

@@ -10,8 +10,8 @@ insert into jornadas (nome, descricao) values
   ('Comercial 40h',      'Seg a Sex 08:00–17:00, intervalo 12:00–13:00')
 on conflict (nome) do nothing;
 
-insert into jornada_dias (jornada_id, dia_semana, folga, entrada, saida_intervalo, retorno_intervalo, saida)
-select j.id, d.dia, d.folga, d.ent::time, d.si::time, d.ri::time, d.sai::time
+insert into jornada_dias (jornada_id, dia_semana, folga, entrada, saida_intervalo, retorno_intervalo, saida, dia_util, recebe_vt, recebe_va)
+select j.id, d.dia, d.folga, d.ent::time, d.si::time, d.ri::time, d.sai::time, not d.folga, not d.folga, not d.folga
   from jornadas j
   join (values
     ('Administrativa 44h', 0, true,  null,    null,    null,    null),

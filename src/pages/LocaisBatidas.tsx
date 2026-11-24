@@ -28,6 +28,7 @@ export default function LocaisBatidas() {
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ local: '', situacao: '' as GeoStatus | '', colaboradores: [] as string[], departamento: '' });
   const [dados, setDados] = useState<LocaisBatidasRelatorio | null>(null);
+  const [consultado, setConsultado] = useState(periodo);
   const [ver, setVer] = useState<GeoStatus | ''>('');
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -46,6 +47,7 @@ export default function LocaisBatidas() {
       });
       semearEnderecos(r.itens);
       setDados(r);
+      setConsultado(periodo);
       setVer('');
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao consultar.');
@@ -66,7 +68,7 @@ export default function LocaisBatidas() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Locais das batidas</h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -132,7 +134,7 @@ export default function LocaisBatidas() {
         </div>
       ) : (
         <>
-          <CabecalhoImpressao titulo="Locais das batidas" periodo={periodo} />
+          <CabecalhoImpressao titulo="Locais das batidas" periodo={consultado} />
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setVer('')} className={chip(!ver)}>Todas · {dados.itens.length}</button>
             {SITUACOES.filter((s) => contagem[s.valor]).map((s) => (

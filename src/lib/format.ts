@@ -43,4 +43,6 @@ export function iniciais(nome: string): string {
   return (primeira + ultima).toUpperCase();
 }
 
+export const formatMoeda = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
 export const numero = (n: number) => n.toLocaleString('pt-BR');

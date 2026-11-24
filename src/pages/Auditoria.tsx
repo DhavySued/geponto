@@ -23,6 +23,7 @@ export const TABELAS_AUDITORIA: Record<string, string> = {
   cargos: 'Cargos',
   jornadas: 'Jornadas',
   jornada_dias: 'Dias da jornada',
+  tipos_beneficio: 'Tipos de VT e VA',
   feriados: 'Feriados',
   colaboradores: 'Colaboradores',
   colaborador_situacoes: 'Situação do colaborador',

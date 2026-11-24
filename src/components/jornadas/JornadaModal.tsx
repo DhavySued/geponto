@@ -43,6 +43,13 @@ function proximasDatas(dataBase: string | null, ciclo: number, dia: number): str
   return formatData(toISODate(d), { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
 }
 
+/** Opções de cada dia, além do horário */
+const OPCOES_DIA: { chave: 'dia_util' | 'recebe_vt' | 'recebe_va'; label: string; dica: string }[] = [
+  { chave: 'dia_util', label: 'Dia útil', dica: 'Falta em dia útil desconta o DSR da semana' },
+  { chave: 'recebe_vt', label: 'VT', dica: 'Trabalhando neste dia, recebe vale-transporte' },
+  { chave: 'recebe_va', label: 'VA', dica: 'Trabalhando neste dia, recebe vale-alimentação' },
+];
+
 export function JornadaModal({
   aberto,
   jornada,
@@ -152,7 +159,7 @@ export function JornadaModal({
     <Modal
       aberto={aberto}
       onFechar={onFechar}
-      largura="max-w-4xl"
+      largura="max-w-5xl"
       titulo={jornada?.id ? 'Editar jornada' : 'Nova jornada de trabalho'}
       descricao="Defina os horários e a escala de trabalho."
       rodape={
@@ -304,7 +311,7 @@ export function JornadaModal({
           </div>
 
           <div className="max-h-[360px] overflow-auto rounded-xl ring-1 ring-slate-200/80">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[820px] text-sm">
               <thead className="sticky top-0 bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="px-3 py-2.5 text-left font-medium">Dia</th>
@@ -315,6 +322,9 @@ export function JornadaModal({
                     </th>
                   ))}
                   <th className="px-3 py-2.5 text-right font-medium">Horas</th>
+                  {OPCOES_DIA.map((o) => (
+                    <th key={o.chave} className="whitespace-nowrap px-2 py-2.5 text-center font-medium" title={o.dica}>{o.label}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -337,8 +347,8 @@ export function JornadaModal({
                           aria-label={`${rotulo} é dia de trabalho`}
                           onClick={() =>
                             setDia(i, d.folga
-                              ? { folga: false, entrada: '08:00', saida_intervalo: '12:00', retorno_intervalo: '13:00', saida: '17:00' }
-                              : { folga: true })
+                              ? { folga: false, dia_util: true, recebe_vt: true, recebe_va: true, entrada: '08:00', saida_intervalo: '12:00', retorno_intervalo: '13:00', saida: '17:00' }
+                              : { folga: true, dia_util: false, recebe_vt: false, recebe_va: false })
                           }
                           className={clsx(
                             'relative inline-flex h-5 w-9 rounded-full transition',
@@ -373,6 +383,13 @@ export function JornadaModal({
                       <td className="px-3 py-2 text-right font-medium tabular-nums text-slate-700">
                         {d.folga ? '—' : formatMinutos(minutosDia(d))}
                       </td>
+                      {OPCOES_DIA.map((o) => (
+                        <td key={o.chave} className="px-2 py-2 text-center">
+                          <input type="checkbox" className="h-4 w-4 accent-primary-700" checked={d[o.chave] ?? !d.folga}
+                            aria-label={`${rotulo} — ${o.label}`} title={o.dica}
+                            onChange={(e) => setDia(i, { [o.chave]: e.target.checked })} />
+                        </td>
+                      ))}
                     </tr>
                   );
                 })}
@@ -381,7 +398,8 @@ export function JornadaModal({
           </div>
           <p className="mt-2 text-[11px] text-slate-400">
             Sem intervalo? Deixe "Saída intervalo" e "Retorno" em branco. Turnos que viram a meia-noite (ex.: 22:00–06:00) são
-            aceitos: as batidas da madrugada contam no dia em que o turno começou.
+            aceitos: as batidas da madrugada contam no dia em que o turno começou. Dia útil vale para o DSR; VT e VA marcam os
+            dias que contam nos relatórios quando trabalhados (inclusive folgas, se marcadas).
           </p>
         </section>
 

@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { AlertTriangle, Award, Download, Printer, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
+import { CabecalhoImpressao, useCabecalhoCsv } from '@/components/relatorios/CabecalhoImpressao';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
@@ -35,6 +35,7 @@ interface Resposta {
 
 export default function RelatorioAssiduidade() {
   const { aux, erro: erroAux } = useFiltrosAux();
+  const cabecalhoCsv = useCabecalhoCsv();
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [mostrar, setMostrar] = useState<Mostrar>('todos');
@@ -95,6 +96,8 @@ export default function RelatorioAssiduidade() {
     return t;
   }, [itens]);
 
+  // Período do que está na tela (os campos podem ter mudado depois da consulta)
+  const consultado = dados ? { ini: dados.periodo.inicio, fim: dados.periodo.fim } : periodo;
   const exportar = () => {
     const cab = ['Matrícula', 'Colaborador', 'Departamento', 'Dias previstos', 'Dias trabalhados', 'Faltas', 'Faltas abonadas',
       'Dias de afastamento/ocorrência', 'Atrasos', 'Minutos de atraso', 'Saídas antecipadas', 'Minutos de saída antecipada',
@@ -105,14 +108,14 @@ export default function RelatorioAssiduidade() {
       i.dias_ausencia, i.atrasos, i.atraso_min, i.saidas_antecipadas, i.saida_antecipada_min, i.dias_com_ocorrencia,
       num(assiduidade(i)), num(semOcorrencia(i)),
     ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))];
-    baixarArquivo(`assiduidade_${periodo.ini}_${periodo.fim}.csv`, linhas.join('\r\n'), 'text/csv');
+    baixarArquivo(`assiduidade_${consultado.ini}_${consultado.fim}.csv`, [...cabecalhoCsv('Listagem de assiduidade', consultado), ...linhas].join('\r\n'), 'text/csv');
   };
 
   const apuradoAte = dados && dados.periodo.apurado_ate < dados.periodo.fim ? dados.periodo.apurado_ate : null;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Listagem de assiduidade</h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -176,7 +179,7 @@ export default function RelatorioAssiduidade() {
         <div className="card"><EmptyState icon={Award} titulo="Nenhum colaborador" descricao="Não há colaboradores com dias previstos com esses filtros." /></div>
       ) : (
         <>
-          <CabecalhoImpressao titulo="Listagem de assiduidade" periodo={periodo} />
+          <CabecalhoImpressao titulo="Listagem de assiduidade" periodo={consultado} />
           {apuradoAte && (
             <p className="text-xs text-slate-500">Apurado até {formatData(apuradoAte)}: os dias de hoje em diante ainda não entram.</p>
           )}

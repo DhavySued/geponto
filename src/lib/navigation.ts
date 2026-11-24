@@ -37,6 +37,9 @@ import {
   Timer,
   UserCog,
   Users,
+  Bus,
+  UtensilsCrossed,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import type { PaginaChave } from './types';
@@ -140,6 +143,14 @@ export const NAVEGACAO: NavGroup[] = [
         descricao: 'Motivos de inclusão e de desconsideração de batidas',
         path: '/cadastros/motivos-batida',
         icon: ListChecks,
+      },
+      {
+        chave: 'tipos_beneficio',
+        submenu: 'Tipos',
+        titulo: 'Tipos de VT e VA',
+        descricao: 'Vale-transporte e vale-alimentação: nome, código e valor diário',
+        path: '/cadastros/tipos-vt-va',
+        icon: Wallet,
       },
       {
         chave: 'usuarios',
@@ -263,8 +274,17 @@ export const NAVEGACAO: NavGroup[] = [
         icon: MapPinned,
       },
       {
+        chave: 'relatorio_banco_horas_detalhe',
+        submenu: 'Banco de Horas',
+        titulo: 'Detalhamento de Banco de Horas',
+        descricao: 'Dia a dia de cada colaborador, com as batidas, o que entrou no banco e o saldo (até 92 dias)',
+        path: '/relatorios/banco-horas-detalhamento',
+        icon: ListChecks,
+      },
+      {
         chave: 'relatorio_banco_horas',
-        titulo: 'Banco de Horas',
+        submenu: 'Banco de Horas',
+        titulo: 'Resumo do Banco de Horas',
         descricao: 'Saldo anterior, créditos, débitos, ajustes, conversões e saldo final de cada colaborador',
         path: '/relatorios/banco-horas',
         icon: Hourglass,
@@ -305,6 +325,22 @@ export const NAVEGACAO: NavGroup[] = [
         icon: Award,
       },
       {
+        chave: 'relatorio_vt',
+        submenu: 'VT e VA',
+        titulo: 'Relatório de VT',
+        descricao: 'Dias trabalhados que contam para o vale-transporte e o valor (até 92 dias)',
+        path: '/relatorios/vt',
+        icon: Bus,
+      },
+      {
+        chave: 'relatorio_va',
+        submenu: 'VT e VA',
+        titulo: 'Relatório de VA',
+        descricao: 'Dias trabalhados que contam para o vale-alimentação e o valor (até 92 dias)',
+        path: '/relatorios/va',
+        icon: UtensilsCrossed,
+      },
+      {
         chave: 'relatorio_colaboradores',
         titulo: 'Dados dos Colaboradores',
         descricao: 'Relatório do cadastro com as colunas que você escolher e filtro por campo preenchido ou em branco',
@@ -326,8 +362,8 @@ export const NAVEGACAO: NavGroup[] = [
       },
       {
         chave: 'configuracoes',
-        titulo: 'Registro de Ponto',
-        descricao: 'Limitações para o registro de ponto (cerca virtual)',
+        titulo: 'Registro de Ponto, VT e VA',
+        descricao: 'Limitações para o registro de ponto (cerca virtual) e quando o dia conta para VT e VA',
         path: '/configuracoes/registro-ponto',
         icon: Fingerprint,
       },
@@ -361,6 +397,8 @@ export const ICONES_SUBMENU: Record<string, LucideIcon> = {
   Colaboradores: Users,
   Batidas: Fingerprint,
   'Banco de horas': Hourglass,
+  'Banco de Horas': Hourglass,
+  'VT e VA': Wallet,
 };
 
 export const TODAS_PAGINAS = NAVEGACAO.flatMap((g) => g.itens);

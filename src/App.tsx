@@ -31,12 +31,15 @@ import RelatorioFaltas from '@/pages/RelatorioFaltas';
 import RelatorioAssiduidade from '@/pages/RelatorioAssiduidade';
 import RelatorioColaboradores from '@/pages/RelatorioColaboradores';
 import ConfigDashboard from '@/pages/ConfigDashboard';
+import TiposBeneficio from '@/pages/TiposBeneficio';
+import { RelatorioVA, RelatorioVT } from '@/pages/RelatorioBeneficio';
 import MotivosBatida from '@/pages/MotivosBatida';
 import PerfisEventos from '@/pages/PerfisEventos';
 import Escalas from '@/pages/Escalas';
 import QuebraRegras from '@/pages/QuebraRegras';
 import LocaisBatidas from '@/pages/LocaisBatidas';
 import RelatorioBancoHoras from '@/pages/RelatorioBancoHoras';
+import RelatorioBancoHorasDetalhe from '@/pages/RelatorioBancoHorasDetalhe';
 import RelatorioEscalas from '@/pages/RelatorioEscalas';
 import Auditoria from '@/pages/Auditoria';
 import TotaisPeriodo from '@/pages/TotaisPeriodo';
@@ -84,6 +87,9 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   ocorrencias: Ocorrencias,
   afastamentos: Afastamentos,
   tipos_licenca: TiposLicenca,
+  tipos_beneficio: TiposBeneficio,
+  relatorio_vt: RelatorioVT,
+  relatorio_va: RelatorioVA,
   motivos_batida: MotivosBatida,
   afd: ArquivoAfd,
   relatorio_noturno: RelatorioNoturno,
@@ -99,6 +105,7 @@ const PAGINAS: Partial<Record<PaginaChave, () => JSX.Element>> = {
   quebra_regras: QuebraRegras,
   locais_batidas: LocaisBatidas,
   relatorio_banco_horas: RelatorioBancoHoras,
+  relatorio_banco_horas_detalhe: RelatorioBancoHorasDetalhe,
   relatorio_escalas: RelatorioEscalas,
   empresas: Empresas,
   configuracoes: Configuracoes,

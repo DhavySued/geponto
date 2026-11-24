@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { ArrowRight, CalendarClock, Crosshair, History, KeyRound, Loader2, MapPin, MapPinned, Plus } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { CamposBeneficio, erroBeneficio } from '@/components/colaboradores/CamposBeneficio';
 import { Badge, SITUACAO } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { AlertaErro, Field, Switch } from '@/components/ui/Field';
@@ -36,6 +37,7 @@ function vazio(): Colaborador {
     data_admissao: '', data_desligamento: '', situacao: 'ativo', salario: '', observacoes: '',
     // Novo colaborador: controle começa hoje, para não gerar faltas desde uma admissão antiga
     controla_ponto: true, controle_ponto_inicio: toISODate(new Date()), local_ponto_modo: 'empresa',
+    recebe_vt: false, tipo_vt_id: '', recebe_va: false, tipo_va_id: '',
   };
 }
 
@@ -64,7 +66,11 @@ function doBanco(r: Record<string, unknown>): Colaborador {
     out.jornada_id = primeira.jornada_id ?? '';
     out.perfil_evento_id = primeira.perfil_evento_id ?? '';
     out.salario = primeira.salario == null ? '' : String(primeira.salario);
+    out.tipo_vt_id = primeira.tipo_vt_id ?? '';
+    out.tipo_va_id = primeira.tipo_va_id ?? '';
   }
+  out.recebe_vt = !!out.tipo_vt_id;
+  out.recebe_va = !!out.tipo_va_id;
   return out as unknown as Colaborador;
 }
 
@@ -528,6 +534,12 @@ export function ColaboradorModal({
       setErro('O controle de ponto não pode começar antes da admissão.');
       return;
     }
+    const erroBen = erroBeneficio(form);
+    if (erroBen) {
+      setAba('profissional');
+      setErro(erroBen);
+      return;
+    }
     setSalvando(true);
     try {
       const dados: Partial<Colaborador> = { ...form };
@@ -546,6 +558,7 @@ export function ColaboradorModal({
       const admissao = form.id ? {
         situacao: form.situacao, cargo_id: form.cargo_id, departamento_id: form.departamento_id,
         jornada_id: form.jornada_id, perfil_evento_id: form.perfil_evento_id, salario,
+        recebe_vt: form.recebe_vt, tipo_vt_id: form.tipo_vt_id, recebe_va: form.recebe_va, tipo_va_id: form.tipo_va_id,
       } : undefined;
       await api('api_colaborador_salvar', { p_dados: { ...dados, salario, admissao } });
       toast(form.id ? 'Colaborador atualizado.' : 'Colaborador cadastrado.');
@@ -718,7 +731,7 @@ export function ColaboradorModal({
                   {form.id ? (
                     <>Dados da <strong>admissão</strong> (a primeira situação). Eles são alterados só aqui; as mudanças seguintes são lançadas na Situação do Colaborador, a partir de uma data.</>
                   ) : (
-                    <>Situação, cargo, departamento, jornada, regra de cálculo e salário viram a <strong>primeira situação</strong>,
+                    <>Situação, cargo, departamento, jornada, regra de cálculo, salário, VT e VA viram a <strong>primeira situação</strong>,
                     na data da admissão. Depois, as mudanças são lançadas na Situação do Colaborador, a partir de uma data.</>
                   )}
                 </p>
@@ -760,6 +773,8 @@ export function ColaboradorModal({
                   <input className="input tabular-nums" inputMode="decimal" value={form.salario}
                     onChange={(e) => set('salario', e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" />
                 </Field>
+                <CamposBeneficio valor={form} tipos={aux.tipos_beneficio ?? []} nomes={{ vt: primeira?.tipo_vt, va: primeira?.tipo_va }}
+                  onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
                 </>
                 );
               })()}

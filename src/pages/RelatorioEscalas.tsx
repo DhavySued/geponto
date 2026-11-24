@@ -2,7 +2,7 @@ import clsx from 'clsx';
 import { AlertTriangle, CalendarRange, Download, Printer, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
-import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
+import { CabecalhoImpressao, useCabecalhoCsv } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -18,6 +18,7 @@ const horario = (i: RelatorioEscalasItem) =>
 
 export default function RelatorioEscalas() {
   const { aux, erro: erroAux } = useFiltrosAux();
+  const cabecalhoCsv = useCabecalhoCsv();
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '', tipo: '' });
   const [dados, setDados] = useState<Dados | null>(null);
@@ -42,6 +43,8 @@ export default function RelatorioEscalas() {
     }
   };
 
+  // Período do que está na tela (os campos podem ter mudado depois da consulta)
+  const consultado = dados ? { ini: dados.periodo.inicio, fim: dados.periodo.fim } : periodo;
   const itens = dados?.itens ?? [];
   const trabalho = itens.filter((i) => i.tipo === 'trabalho');
   const resumo = {
@@ -62,12 +65,12 @@ export default function RelatorioEscalas() {
         i.realizado && i.saldo_min != null ? formatMinutos(i.saldo_min, true) : '',
         i.realizado && i.falta ? 'Sim' : ''].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')),
     ];
-    baixarArquivo(`escalas_${periodo.ini}_${periodo.fim}.csv`, linhas.join('\r\n'), 'text/csv');
+    baixarArquivo(`escalas_${consultado.ini}_${consultado.fim}.csv`, [...cabecalhoCsv('Relatório de escalas', consultado), ...linhas].join('\r\n'), 'text/csv');
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Relatório de escalas</h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -123,7 +126,7 @@ export default function RelatorioEscalas() {
         <div className="card"><EmptyState icon={CalendarRange} titulo="Nenhuma escala no período" descricao="Não há dias escalados com esses filtros." /></div>
       ) : (
         <>
-          <CabecalhoImpressao titulo="Relatório de escalas" periodo={periodo} />
+          <CabecalhoImpressao titulo="Relatório de escalas" periodo={consultado} />
           <div className="grid gap-3 sm:grid-cols-5">
             {[
               ['Colaboradores', resumo.colaboradores],

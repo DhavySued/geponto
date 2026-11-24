@@ -17,6 +17,9 @@ export type PaginaChave =
   | 'ocorrencias'
   | 'afastamentos'
   | 'tipos_licenca'
+  | 'tipos_beneficio'
+  | 'relatorio_vt'
+  | 'relatorio_va'
   | 'motivos_batida'
   | 'afd'
   | 'relatorio_noturno'
@@ -32,6 +35,7 @@ export type PaginaChave =
   | 'quebra_regras'
   | 'locais_batidas'
   | 'relatorio_banco_horas'
+  | 'relatorio_banco_horas_detalhe'
   | 'relatorio_escalas'
   | 'auditoria'
   | 'empresas'
@@ -121,6 +125,8 @@ export interface Configuracoes {
   pode_editar: boolean;
   usar_limitacoes_ponto: boolean;
   bloquear_fora_cerca: boolean;
+  /** Quando o dia conta para VT/VA: um turno trabalhado ou os dois */
+  beneficio_turnos: 'um' | 'dois';
   fuso_horario: string;
   empresas: { id: string; nome: string; tem_local: boolean; raio_m: number | null }[];
 }
@@ -225,6 +231,7 @@ export interface CadastrosAuxiliares {
   jornadas: Opcao[];
   perfis_eventos: (Opcao & { padrao: boolean })[];
   gestores: Opcao[];
+  tipos_beneficio?: OpcaoBeneficio[];
   /** Próxima matrícula da sequência (sugerida no cadastro) */
   proxima_matricula: string | null;
 }
@@ -260,6 +267,56 @@ export interface HistoricoItem {
 }
 
 /** Situação do Colaborador: o que vale a partir de data_inicio até data_fim (a véspera da seguinte) */
+export type TipoBeneficio = 'vt' | 'va';
+
+export interface OpcaoBeneficio {
+  id: string;
+  nome: string;
+  codigo: string;
+  tipo: TipoBeneficio;
+  valor_diario: number;
+}
+
+/** VT e VA no formulário (tipo vazio = não escolhido) */
+export interface BeneficiosColaborador {
+  recebe_vt: boolean;
+  tipo_vt_id: string;
+  recebe_va: boolean;
+  tipo_va_id: string;
+}
+
+export interface RelatorioBeneficioDia {
+  data: string;
+  tipo: string;
+  codigo: string;
+  valor_diario: number;
+  batidas: { hora: string; sentido: Sentido; turno: number; manual: boolean }[];
+  pre_assinalado: boolean;
+  turnos: number;
+  turnos_previstos: number;
+  trabalhado_min: number;
+  ocorrencia: string;
+  escala: 'trabalho' | 'folga' | null;
+  computa: boolean;
+}
+
+export interface RelatorioBeneficioItem {
+  colaborador_id: string;
+  nome: string;
+  matricula: string;
+  departamento: string | null;
+  dias_marcados: number;
+  dias_computados: number;
+  valor_total: number;
+  dias: RelatorioBeneficioDia[];
+}
+
+export interface RelatorioBeneficio {
+  periodo: { inicio: string; fim: string; apurado_ate: string };
+  turnos: 'um' | 'dois';
+  itens: RelatorioBeneficioItem[];
+}
+
 export interface ColaboradorSituacao {
   id: string;
   colaborador_id: string;
@@ -277,6 +334,12 @@ export interface ColaboradorSituacao {
   perfil_evento_id: string | null;
   perfil_evento: string | null;
   salario: number | null;
+  recebe_vt: boolean;
+  tipo_vt_id: string | null;
+  tipo_vt: string | null;
+  recebe_va: boolean;
+  tipo_va_id: string | null;
+  tipo_va: string | null;
   motivo: string | null;
   /** A da admissão: não muda de data nem é excluída */
   primeira: boolean;
@@ -300,6 +363,7 @@ export interface SituacoesDados {
   departamentos: Opcao[];
   jornadas: Opcao[];
   perfis_eventos: (Opcao & { padrao: boolean })[];
+  tipos_beneficio?: OpcaoBeneficio[];
 }
 
 export type LocalPontoModo = 'empresa' | 'proprio' | 'ambos';
@@ -320,7 +384,7 @@ export interface AcessoColaborador {
   ultimo_acesso: string | null;
 }
 
-export interface Colaborador {
+export interface Colaborador extends BeneficiosColaborador {
   id?: string;
   /** Empresa do colaborador; vazio = a empresa em que o usuário está conectado */
   empresa_id: string;
@@ -367,6 +431,10 @@ export interface Colaborador {
 export interface JornadaDia {
   dia_semana: number;
   folga: boolean;
+  /** Dia útil (controle de DSR) e se o dia dá direito a VT e a VA; sem o campo, segue o dia de trabalho */
+  dia_util?: boolean;
+  recebe_vt?: boolean;
+  recebe_va?: boolean;
   entrada: string | null;
   saida_intervalo: string | null;
   retorno_intervalo: string | null;
@@ -1323,6 +1391,44 @@ export interface RelatorioBancoHorasItem {
 export interface RelatorioBancoHoras {
   periodo: { inicio: string; fim: string };
   itens: RelatorioBancoHorasItem[];
+}
+
+export interface BancoHorasDetalheDia {
+  data: string;
+  horario: string | null;
+  feriado: string | null;
+  escala: 'trabalho' | 'folga' | null;
+  /** null: dia sem apuração (hoje, futuro ou fora do controle de ponto) */
+  ocorrencia: string | null;
+  batidas: { hora: string; sentido: Sentido; turno: number; manual: boolean }[];
+  pre_assinalado: boolean;
+  previsto_min: number | null;
+  trabalhado_min: number | null;
+  saldo_min: number | null;
+  banco_horas: boolean | null;
+  /** Lançamento automático do dia (com o percentual da regra) */
+  banco_min: number;
+  descricao: string | null;
+  /** Ajustes manuais e conversões do dia */
+  lancamentos: { tipo: string; minutos: number; descricao: string | null }[];
+  saldo_acumulado: number;
+  fechado: boolean;
+}
+
+export interface BancoHorasDetalheItem {
+  colaborador_id: string;
+  nome: string;
+  matricula: string;
+  departamento: string | null;
+  cargo: string | null;
+  saldo_anterior: number;
+  saldo_final: number;
+  dias: BancoHorasDetalheDia[];
+}
+
+export interface RelatorioBancoHorasDetalhe {
+  periodo: { inicio: string; fim: string; apurado_ate: string };
+  itens: BancoHorasDetalheItem[];
 }
 
 export interface RelatorioEscalasItem {

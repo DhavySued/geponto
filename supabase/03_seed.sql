@@ -41,13 +41,17 @@ insert into paginas (chave, nome, grupo, ordem) values
   ('totais_periodo',     'Totais e Exportação p/ Folha', 'Relatórios', 82),
   ('quebra_regras',      'Quebra de Regras',          'Relatórios', 84),
   ('locais_batidas',     'Locais das Batidas',        'Relatórios', 86),
-  ('relatorio_banco_horas', 'Relatório de Banco de Horas', 'Relatórios', 87),
+  ('relatorio_banco_horas_detalhe', 'Detalhamento de Banco de Horas', 'Relatórios', 87),
+  ('relatorio_banco_horas', 'Resumo do Banco de Horas', 'Relatórios', 87),
   ('relatorio_escalas',  'Relatório de Escalas',      'Relatórios', 88),
   ('relatorio_noturno',  'Relatório de Adicional Noturno', 'Relatórios', 89),
   ('relatorio_folgas',   'Relatório de Folgas',       'Relatórios', 89),
   ('relatorio_faltas',   'Listagem de Faltas',        'Relatórios', 89),
   ('relatorio_assiduidade', 'Listagem de Assiduidade', 'Relatórios', 89),
   ('relatorio_colaboradores', 'Relatório de Colaboradores', 'Relatórios', 89),
+  ('tipos_beneficio',    'Tipos de VT e VA',          'Cadastros',  48),
+  ('relatorio_vt',       'Relatório de VT',           'Relatórios', 89),
+  ('relatorio_va',       'Relatório de VA',           'Relatórios', 89),
   ('empresas',           'Empresas',                  'Configurações', 90),
   ('configuracoes',      'Registro de Ponto',         'Configurações', 92),
   ('config_dashboard',   'Dashboard',                 'Configurações', 93),
@@ -224,9 +228,22 @@ insert into tipos_licenca (descricao, abona) values
   ('Licença não remunerada', false)
 on conflict (descricao) do nothing;
 
+-- VT e VA: o cadastro segue as jornadas; os relatórios, os totais do período
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'tipos_beneficio', pode_visualizar, pode_editar from perfil_permissoes where pagina = 'jornadas'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, x.pagina, pode_visualizar, false
+  from perfil_permissoes cross join (values ('relatorio_vt'), ('relatorio_va')) x(pagina)
+ where perfil_permissoes.pagina = 'totais_periodo'
+on conflict (perfil_id, pagina) do nothing;
+
 -- Relatórios de Banco de Horas e de Escalas: quem vê o banco de horas / as escalas vê o relatório
 insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
 select perfil_id, 'relatorio_banco_horas', pode_visualizar, false from perfil_permissoes where pagina = 'banco_horas'
+on conflict (perfil_id, pagina) do nothing;
+insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
+select perfil_id, 'relatorio_banco_horas_detalhe', pode_visualizar, false from perfil_permissoes where pagina = 'relatorio_banco_horas'
 on conflict (perfil_id, pagina) do nothing;
 insert into perfil_permissoes (perfil_id, pagina, pode_visualizar, pode_editar)
 select perfil_id, 'relatorio_escalas', pode_visualizar, false from perfil_permissoes where pagina = 'escalas'

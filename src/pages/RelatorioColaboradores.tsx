@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { AlertTriangle, Check, Contact, Download, Printer, RotateCcw, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
+import { CabecalhoImpressao, useCabecalhoCsv } from '@/components/relatorios/CabecalhoImpressao';
 import { SITUACAO } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
@@ -136,17 +136,18 @@ export default function RelatorioColaboradores() {
     });
   };
 
+  const cabecalhoCsv = useCabecalhoCsv();
   const exportar = () => {
     const csv = [
       colunas.map((c) => c.titulo).join(';'),
       ...linhas.map((i) => colunas.map((c) => `"${c.valor(i).replace(/"/g, '""')}"`).join(';')),
     ];
-    baixarArquivo('colaboradores.csv', csv.join('\r\n'), 'text/csv');
+    baixarArquivo('colaboradores.csv', [...cabecalhoCsv('Dados dos colaboradores'), ...csv].join('\r\n'), 'text/csv');
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Dados dos colaboradores</h2>
           <p className="mt-1 text-sm text-slate-500">

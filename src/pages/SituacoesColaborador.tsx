@@ -3,6 +3,7 @@ import { AlertTriangle, CalendarClock, Lock, Pencil, Plus, Search, Trash2, UserC
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, SITUACAO } from '@/components/ui/Badge';
+import { CamposBeneficio, erroBeneficio } from '@/components/colaboradores/CamposBeneficio';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -13,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatData, parseISODate, toISODate } from '@/lib/format';
 import { opcoesColaboradores, paramColaboradores } from '@/lib/hooks';
 import { api } from '@/lib/api';
-import type { ColaboradorSituacao, SituacaoColaborador, SituacoesDados } from '@/lib/types';
+import type { BeneficiosColaborador, ColaboradorSituacao, SituacaoColaborador, SituacoesDados } from '@/lib/types';
 
 /** Situações que se lançam aqui (o desligamento é a data de desligamento do cadastro) */
 const SITUACOES: SituacaoColaborador[] = ['ativo', 'ferias', 'afastado'];
@@ -32,7 +33,7 @@ const vespera = (s: string) => {
 const salarioParaApi = (s: string) =>
   s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : /^\d{1,3}(\.\d{3})+$/.test(s) ? s.replace(/\./g, '') : s;
 
-interface Form {
+interface Form extends BeneficiosColaborador {
   id?: string;
   colaborador_id: string;
   data_inicio: string;
@@ -48,6 +49,11 @@ interface Form {
 const formVazio = (colaborador = ''): Form => ({
   colaborador_id: colaborador, data_inicio: toISODate(new Date()), situacao: 'ativo', cargo_id: '', departamento_id: '',
   jornada_id: '', perfil_evento_id: '', salario: '', motivo: '',
+  recebe_vt: false, tipo_vt_id: '', recebe_va: false, tipo_va_id: '',
+});
+
+const beneficiosDe = (s: ColaboradorSituacao): BeneficiosColaborador => ({
+  recebe_vt: !!s.recebe_vt, tipo_vt_id: s.tipo_vt_id ?? '', recebe_va: !!s.recebe_va, tipo_va_id: s.tipo_va_id ?? '',
 });
 
 /** Situação vigente numa data (a última que começou até ela) */
@@ -92,6 +98,7 @@ function SituacaoModal({
         situacao: v.situacao === 'desligado' ? 'ativo' : v.situacao,
         cargo_id: v.cargo_id ?? '', departamento_id: v.departamento_id ?? '', jornada_id: v.jornada_id ?? '',
         perfil_evento_id: v.perfil_evento_id ?? '', salario: v.salario == null ? '' : String(v.salario),
+        ...beneficiosDe(v),
       }),
       ...base,
     });
@@ -105,7 +112,7 @@ function SituacaoModal({
         id: situacao.id, colaborador_id: situacao.colaborador_id, data_inicio: situacao.data_inicio, situacao: situacao.situacao,
         cargo_id: situacao.cargo_id ?? '', departamento_id: situacao.departamento_id ?? '', jornada_id: situacao.jornada_id ?? '',
         perfil_evento_id: situacao.perfil_evento_id ?? '', salario: situacao.salario == null ? '' : String(situacao.salario),
-        motivo: situacao.motivo ?? '',
+        motivo: situacao.motivo ?? '', ...beneficiosDe(situacao),
       });
     } else {
       preencher(colaboradorInicial, toISODate(new Date()));
@@ -127,6 +134,8 @@ function SituacaoModal({
     if (colab && form.data_inicio < colab.data_admissao) {
       return setErro(`A situação não pode começar antes da admissão (${dataBR(colab.data_admissao)}).`);
     }
+    const erroBen = erroBeneficio(form);
+    if (erroBen) return setErro(erroBen);
     setSalvando(true);
     try {
       await api('api_colaborador_situacao_salvar', { p_dados: { ...form, salario: salarioParaApi(form.salario) } });
@@ -232,6 +241,8 @@ function SituacaoModal({
           <input className="input tabular-nums" inputMode="decimal" value={form.salario} placeholder="0,00"
             onChange={(e) => set('salario', e.target.value.replace(/[^\d.,]/g, ''))} />
         </Field>
+        <CamposBeneficio valor={form} tipos={dados?.tipos_beneficio ?? []} nomes={{ vt: situacao?.tipo_vt, va: situacao?.tipo_va }}
+          desabilitado={somenteLeitura} onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
         <Field label="Motivo" className="sm:col-span-2">
           <input className="input" value={form.motivo} maxLength={200} placeholder="Ex.: promoção, mudança de setor, troca de turno…"
             onChange={(e) => set('motivo', e.target.value)} />
@@ -319,7 +330,7 @@ export default function SituacoesColaborador() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Situação do Colaborador</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Situação, cargo, departamento, jornada, regra de cálculo e salário valem a partir de uma data, até a véspera da
+            Situação, cargo, departamento, jornada, regra de cálculo, salário, VT e VA valem a partir de uma data, até a véspera da
             próxima situação. A primeira é a da admissão, criada com o cadastro. O desligamento é a data de desligamento, no cadastro. Os dados pessoais ficam no{' '}
             <Link to="/cadastros/colaboradores" className="font-medium text-primary-600 hover:underline">Cadastro de Colaboradores</Link>.
           </p>
@@ -395,6 +406,7 @@ export default function SituacoesColaborador() {
                   <th className="px-3 py-2.5">Jornada</th>
                   <th className="px-3 py-2.5">Regra de cálculo</th>
                   <th className="px-3 py-2.5 text-right">Salário</th>
+                  <th className="px-3 py-2.5">VT / VA</th>
                   <th className="px-3 py-2.5">Motivo</th>
                   <th className="px-3 py-2.5" />
                 </tr>
@@ -425,6 +437,11 @@ export default function SituacoesColaborador() {
                       <td className="px-3 py-2.5 align-top text-slate-700">{x.jornada ?? '—'}</td>
                       <td className="px-3 py-2.5 align-top text-slate-700">{x.perfil_evento ?? 'Regra padrão'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right align-top tabular-nums text-slate-700">{moeda(x.salario)}</td>
+                      <td className="px-3 py-2.5 align-top text-xs text-slate-700">
+                        {x.tipo_vt && <p>VT: {x.tipo_vt}</p>}
+                        {x.tipo_va && <p>VA: {x.tipo_va}</p>}
+                        {!x.tipo_vt && !x.tipo_va && '—'}
+                      </td>
                       <td className="max-w-[200px] px-3 py-2.5 align-top text-xs text-slate-500">{x.motivo ?? '—'}</td>
                       <td className="px-3 py-2.5 align-top">
                         <div className="flex justify-end gap-1">

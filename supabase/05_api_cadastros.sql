@@ -32,7 +32,8 @@ begin
                                       greatest(coalesce(max(length(matricula)), 1), length((coalesce(max(matricula::numeric), 0) + 1)::text)), '0')
                             from colaboradores where matricula ~ '^[0-9]{1,15}$'),
     'gestores',      coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome)
-                                 from colaboradores where situacao <> 'desligado'), '[]'::jsonb)
+                                 from colaboradores where situacao <> 'desligado'), '[]'::jsonb),
+    'tipos_beneficio', fn_tipos_beneficio_json()
   );
 end $$;
 
@@ -117,6 +118,8 @@ returns jsonb language sql stable set search_path = public as $$
            'cargo_id', s.cargo_id, 'cargo', g.nome, 'departamento_id', s.departamento_id, 'departamento', d.nome,
            'jornada_id', s.jornada_id, 'jornada', j.nome, 'perfil_evento_id', s.perfil_evento_id, 'perfil_evento', pe.nome,
            'salario', s.salario, 'motivo', s.motivo, 'primeira', s.primeira,
+           'recebe_vt', s.tipo_vt_id is not null, 'tipo_vt_id', s.tipo_vt_id, 'tipo_vt', tvt.nome,
+           'recebe_va', s.tipo_va_id is not null, 'tipo_va_id', s.tipo_va_id, 'tipo_va', tva.nome,
            'vigente', s.data_inicio <= fn_hoje() and (s.data_fim is null or s.data_fim >= fn_hoje()),
            'futura', s.data_inicio > fn_hoje(),
            'fechado', s.data_inicio <= coalesce(fn_fechado_ate(s.colaborador_id), '-infinity'::date),
@@ -130,6 +133,8 @@ returns jsonb language sql stable set search_path = public as $$
     left join perfis_eventos pe on pe.id = s.perfil_evento_id
     left join usuarios u        on u.id = s.usuario_id
     left join usuarios u2       on u2.id = s.alterado_por
+    left join tipos_beneficio tvt on tvt.id = s.tipo_vt_id
+    left join tipos_beneficio tva on tva.id = s.tipo_va_id
    where fn_visivel(c.id);
 $$;
 
@@ -155,7 +160,8 @@ begin
                             from jornadas where ativo and fn_da_empresa(empresa_id, todas_empresas)), '[]'::jsonb),
     'perfis_eventos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome, 'padrao', padrao)
                                                  order by padrao desc, nome)
-                                  from perfis_eventos where ativo and (padrao or fn_da_empresa(empresa_id, todas_empresas))), '[]'::jsonb));
+                                  from perfis_eventos where ativo and (padrao or fn_da_empresa(empresa_id, todas_empresas))), '[]'::jsonb),
+    'tipos_beneficio', fn_tipos_beneficio_json());
 end $$;
 
 -- Inclui ou altera uma situação. Vale da data informada até a véspera da seguinte.
@@ -172,6 +178,9 @@ declare
   v_fechado date;
   v_perfil uuid;
   v_jornada uuid := fn_txt(d, 'jornada_id')::uuid;
+  v_vt uuid;
+  v_va uuid;
+  v_ant colaborador_situacoes%rowtype;
   v_usuario uuid := nullif(current_setting('app.usuario_id', true), '')::uuid;
 begin
   perform fn_auth(p_token, 'situacoes_colaborador', true);
@@ -223,20 +232,29 @@ begin
     raise exception 'Escolha uma jornada ativa.';
   end if;
 
+  -- Sem os campos de VT/VA: mantém os da própria situação ou, na inclusão, os que valiam na data
+  v_ant := v_old;
+  if v_id is null then
+    select * into v_ant from colaborador_situacoes
+     where colaborador_id = v_colab and data_inicio <= v_data order by data_inicio desc limit 1;
+  end if;
+  v_vt := fn_beneficio_informado(d, 'vt', v_ant.tipo_vt_id);
+  v_va := fn_beneficio_informado(d, 'va', v_ant.tipo_va_id);
+
   perform set_config('app.data_vigencia', v_data::text, true);
   if v_id is null then
     insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
-                                       jornada_id, perfil_evento_id, salario, motivo, usuario_id)
+                                       jornada_id, perfil_evento_id, salario, motivo, usuario_id, tipo_vt_id, tipo_va_id)
     values (v_colab, v_data, coalesce(fn_txt(d, 'situacao'), 'ativo')::situacao_colaborador,
             fn_txt(d, 'cargo_id')::uuid, fn_txt(d, 'departamento_id')::uuid, v_jornada, v_perfil,
-            fn_txt(d, 'salario')::numeric, fn_txt(d, 'motivo'), v_usuario)
+            fn_txt(d, 'salario')::numeric, fn_txt(d, 'motivo'), v_usuario, v_vt, v_va)
     returning id into v_id;
   else
     update colaborador_situacoes set
            data_inicio = v_data, situacao = coalesce(fn_txt(d, 'situacao'), 'ativo')::situacao_colaborador,
            cargo_id = fn_txt(d, 'cargo_id')::uuid, departamento_id = fn_txt(d, 'departamento_id')::uuid,
            jornada_id = v_jornada, perfil_evento_id = v_perfil, salario = fn_txt(d, 'salario')::numeric,
-           motivo = fn_txt(d, 'motivo'), alterado_por = v_usuario
+           motivo = fn_txt(d, 'motivo'), alterado_por = v_usuario, tipo_vt_id = v_vt, tipo_va_id = v_va
      where id = v_id;
   end if;
 
@@ -401,6 +419,10 @@ begin
       fn_txt(d, 'empresa_id')::uuid)   -- vazio: a empresa da sessão
     returning id into v_id;
     v_reproc := v_admissao;
+    update colaborador_situacoes set
+           tipo_vt_id = fn_beneficio_informado(d, 'vt', null), tipo_va_id = fn_beneficio_informado(d, 'va', null)
+     where colaborador_id = v_id
+       and (coalesce((d ->> 'recebe_vt')::boolean, false) or coalesce((d ->> 'recebe_va')::boolean, false));
     perform fn_colaborador_situacao_aplicar(v_id);
   else
     if fn_txt(d, 'gestor_id')::uuid = v_id then
@@ -454,6 +476,8 @@ begin
         n_jor uuid := fn_txt(a, 'jornada_id')::uuid;
         n_per uuid;
         n_sal numeric := fn_txt(a, 'salario')::numeric;
+        n_vt uuid;
+        n_va uuid;
       begin
         select * into s from colaborador_situacoes where colaborador_id = v_id order by data_inicio limit 1;
         if found then
@@ -462,8 +486,12 @@ begin
           end if;
           n_sit := coalesce(fn_txt(a, 'situacao'), s.situacao::text)::situacao_colaborador;
           n_per := coalesce(fn_txt(a, 'perfil_evento_id')::uuid, s.perfil_evento_id);
-          if (s.situacao, s.cargo_id, s.departamento_id, s.jornada_id, s.perfil_evento_id, s.salario)
-             is distinct from (n_sit, fn_txt(a, 'cargo_id')::uuid, fn_txt(a, 'departamento_id')::uuid, n_jor, n_per, n_sal) then
+          n_vt := fn_beneficio_informado(a, 'vt', s.tipo_vt_id);
+          n_va := fn_beneficio_informado(a, 'va', s.tipo_va_id);
+          if (s.situacao, s.cargo_id, s.departamento_id, s.jornada_id, s.perfil_evento_id, s.salario,
+              s.tipo_vt_id, s.tipo_va_id)
+             is distinct from (n_sit, fn_txt(a, 'cargo_id')::uuid, fn_txt(a, 'departamento_id')::uuid, n_jor, n_per, n_sal,
+                               n_vt, n_va) then
             if s.data_inicio <= coalesce(fn_fechado_ate(v_id), '-infinity'::date) then
               raise exception 'A admissão está em um período fechado. Reabra o fechamento para alterar os dados da admissão.';
             end if;
@@ -479,7 +507,7 @@ begin
             update colaborador_situacoes set
               situacao = n_sit, cargo_id = fn_txt(a, 'cargo_id')::uuid,
               departamento_id = fn_txt(a, 'departamento_id')::uuid,
-              jornada_id = n_jor, perfil_evento_id = n_per, salario = n_sal
+              jornada_id = n_jor, perfil_evento_id = n_per, salario = n_sal, tipo_vt_id = n_vt, tipo_va_id = n_va
              where id = s.id;
           end if;
         end if;
@@ -627,6 +655,7 @@ begin
                   'dias', coalesce((
                      select jsonb_agg(jsonb_build_object(
                               'dia_semana', jd.dia_semana, 'folga', jd.folga,
+                              'dia_util', jd.dia_util, 'recebe_vt', jd.recebe_vt, 'recebe_va', jd.recebe_va,
                               'entrada', to_char(jd.entrada, 'HH24:MI'),
                               'saida_intervalo', to_char(jd.saida_intervalo, 'HH24:MI'),
                               'retorno_intervalo', to_char(jd.retorno_intervalo, 'HH24:MI'),
@@ -721,12 +750,16 @@ begin
     delete from jornada_dias where jornada_id = v_id;
   end if;
 
-  insert into jornada_dias (jornada_id, dia_semana, folga, entrada, saida_intervalo, retorno_intervalo, saida)
+  insert into jornada_dias (jornada_id, dia_semana, folga, entrada, saida_intervalo, retorno_intervalo, saida,
+                            dia_util, recebe_vt, recebe_va)
   select v_id, (x ->> 'dia_semana')::smallint, f.folga,
          case when f.folga then null else fn_txt(x, 'entrada')::time end,
          case when f.folga then null else fn_txt(x, 'saida_intervalo')::time end,
          case when f.folga then null else fn_txt(x, 'retorno_intervalo')::time end,
-         case when f.folga then null else fn_txt(x, 'saida')::time end
+         case when f.folga then null else fn_txt(x, 'saida')::time end,
+         coalesce((x ->> 'dia_util')::boolean, not f.folga),
+         coalesce((x ->> 'recebe_vt')::boolean, not f.folga),
+         coalesce((x ->> 'recebe_va')::boolean, not f.folga)
     from jsonb_array_elements(d -> 'dias') x
    cross join lateral (select coalesce((x ->> 'folga')::boolean, false) as folga) f;
 
@@ -899,6 +932,77 @@ end $$;
 -- -----------------------------------------------------------------------------
 revoke execute on function fn_txt(jsonb, text) from public, anon, authenticated;
 
+-- -----------------------------------------------------------------------------
+-- Tipos de VT e VA
+-- -----------------------------------------------------------------------------
+create or replace function api_tipos_beneficio_listar(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'tipos_beneficio');
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id', t.id, 'descricao', t.nome, 'codigo', t.codigo, 'tipo', t.tipo, 'valor_diario', t.valor_diario,
+             'ativo', t.ativo,
+             'em_uso', (select count(distinct s.colaborador_id) from colaborador_situacoes s
+                         where t.id in (s.tipo_vt_id, s.tipo_va_id)))
+           order by t.ativo desc, t.tipo desc, t.nome)
+      from tipos_beneficio t), '[]'::jsonb);
+end $$;
+
+create or replace function api_tipo_beneficio_salvar(p_token text, p_dados jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  d jsonb := p_dados;
+  v_id uuid := nullif(d ->> 'id', '')::uuid;
+  v_txt text := fn_txt(d, 'valor_diario');
+  v_valor numeric;
+begin
+  perform fn_auth(p_token, 'tipos_beneficio', true);
+  if fn_txt(d, 'descricao') is null then raise exception 'Informe o nome.'; end if;
+  if fn_txt(d, 'codigo') is null then raise exception 'Informe o código.'; end if;
+  if coalesce(fn_txt(d, 'tipo'), '') not in ('vt', 'va') then raise exception 'Informe se é VT ou VA.'; end if;
+  -- "1.234,56" → 1234.56; "12.5" segue como está
+  if v_txt like '%,%' then v_txt := replace(replace(v_txt, '.', ''), ',', '.'); end if;
+  if v_txt is null or v_txt !~ '^[0-9]+([.][0-9]{1,2})?$' then raise exception 'Informe o valor diário (ex.: 12,50).'; end if;
+  v_valor := v_txt::numeric;
+  if v_id is null then
+    insert into tipos_beneficio (nome, codigo, tipo, valor_diario, ativo)
+    values (fn_txt(d, 'descricao'), fn_txt(d, 'codigo'), fn_txt(d, 'tipo'), v_valor, coalesce((d ->> 'ativo')::boolean, true))
+    returning id into v_id;
+  else
+    if exists (select 1 from tipos_beneficio where id = v_id and tipo <> fn_txt(d, 'tipo'))
+       and exists (select 1 from colaborador_situacoes where v_id in (tipo_vt_id, tipo_va_id)) then
+      raise exception 'Este tipo já está em uso: não dá para trocar entre VT e VA. Cadastre outro.';
+    end if;
+    update tipos_beneficio set nome = fn_txt(d, 'descricao'), codigo = fn_txt(d, 'codigo'), tipo = fn_txt(d, 'tipo'),
+                               valor_diario = v_valor, ativo = coalesce((d ->> 'ativo')::boolean, true)
+     where id = v_id;
+    if not found then raise exception 'Tipo não encontrado.'; end if;
+  end if;
+  return jsonb_build_object('id', v_id);
+exception
+  when unique_violation then raise exception 'Já existe um tipo de % com este código.', upper(fn_txt(d, 'tipo'));
+  when numeric_value_out_of_range then raise exception 'Valor diário muito alto.';
+end $$;
+
+create or replace function api_tipo_beneficio_excluir(p_token text, p_id uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform fn_auth(p_token, 'tipos_beneficio', true);
+  if exists (select 1 from colaborador_situacoes where p_id in (tipo_vt_id, tipo_va_id)) then
+    raise exception 'Este tipo já foi usado em colaboradores e não pode ser excluído. Desative-o.';
+  end if;
+  delete from tipos_beneficio where id = p_id;
+  if not found then raise exception 'Tipo não encontrado.'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+grant execute on function api_tipos_beneficio_listar(text)                 to anon, authenticated;
+grant execute on function api_tipo_beneficio_salvar(text, jsonb)           to anon, authenticated;
+grant execute on function api_tipo_beneficio_excluir(text, uuid)           to anon, authenticated;
+revoke execute on function fn_dia_util(uuid, date, text)                   from public, anon, authenticated;
+revoke execute on function fn_tipos_beneficio_json()                       from public, anon, authenticated;
+revoke execute on function fn_beneficio_informado(jsonb, text, uuid)       from public, anon, authenticated;
 grant execute on function api_cadastros_auxiliares(text)         to anon, authenticated;
 grant execute on function api_departamento_criar(text, text)     to anon, authenticated;
 grant execute on function api_cargo_criar(text, text)            to anon, authenticated;

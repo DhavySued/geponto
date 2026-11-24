@@ -170,7 +170,8 @@ begin
                  coalesce(sum(a.debito_min) filter (where a.falta and not a.banco_horas), 0)::int as faltas_min,
                  coalesce(sum(least(a.atraso_min + a.saida_antecipada_min, a.debito_min))
                           filter (where not a.banco_horas and not a.falta), 0)::int             as atrasos_min,
-                 count(distinct date_trunc('week', a.data + 1)) filter (where a.falta)         as dsr_perdidos,
+                 count(distinct date_trunc('week', a.data + 1))
+                   filter (where a.falta and fn_dia_util(a.jornada_id, a.data, a.escala))         as dsr_perdidos,
                  coalesce(sum(a.banco_min) filter (where a.banco_horas), 0)::int                as banco_horas_periodo_min,
                  count(*) filter (where a.ocorrencia = 'inconsistente')                         as dias_inconsistentes
             from fn_apuracao(p_inicio, v_ate) a

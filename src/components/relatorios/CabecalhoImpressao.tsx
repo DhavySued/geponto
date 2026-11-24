@@ -1,5 +1,10 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { formatData } from '@/lib/format';
+import { formatData, toISODate } from '@/lib/format';
+
+const dataBR = (d: string) => formatData(d, { day: '2-digit', month: '2-digit', year: 'numeric' });
+/** Sem período (relatório de cadastro): a posição de hoje */
+const textoPeriodo = (p?: { ini: string; fim: string }) =>
+  p ? `Período de ${dataBR(p.ini)} a ${dataBR(p.fim)}` : `Posição em ${dataBR(toISODate(new Date()))}`;
 
 const cnpj = (v: string | null | undefined) => {
   const d = (v ?? '').replace(/\D/g, '');
@@ -22,9 +27,19 @@ export function LogoImpressao() {
   );
 }
 
+/** Primeiras linhas dos CSV de relatório: nome do relatório, razão social, CNPJ e período */
+export function useCabecalhoCsv() {
+  const { usuario } = useAuth();
+  const emp = usuario?.empresa ?? null;
+  const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  return (titulo: string, periodo?: { ini: string; fim: string }): string[] => [
+    q(titulo), q(emp?.razao_social ?? '—'), q(`CNPJ ${cnpj(emp?.cnpj)}`), q(textoPeriodo(periodo)), '',
+  ];
+}
+
 /**
- * Cabeçalho dos relatórios impressos: empresa (nome e CNPJ) à esquerda e a logo do GePonto no canto
- * superior direito. Só aparece na impressão.
+ * Cabeçalho dos relatórios, na tela e na impressão: nome do relatório, razão social, CNPJ e período
+ * consultado à esquerda; a logo do GePonto no canto superior direito.
  */
 export function CabecalhoImpressao({
   titulo,
@@ -39,16 +54,12 @@ export function CabecalhoImpressao({
   const { usuario } = useAuth();
   const emp = empresa ?? usuario?.empresa ?? null;
   return (
-    <header className="mb-4 hidden items-start justify-between gap-4 border-b border-slate-300 pb-3 print:flex">
+    <header className="mb-4 card flex items-start justify-between gap-4 p-4 print:rounded-none print:border-b print:border-slate-300 print:p-0 print:pb-3 print:shadow-none print:ring-0">
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{titulo}</p>
         <p className="text-base font-semibold text-slate-900">{emp?.razao_social ?? '—'}</p>
         <p className="text-xs text-slate-600">CNPJ {cnpj(emp?.cnpj)}</p>
-        {periodo && (
-          <p className="mt-0.5 text-xs text-slate-600">
-            Período de {formatData(periodo.ini)} a {formatData(periodo.fim)}
-          </p>
-        )}
+        <p className="mt-0.5 text-xs text-slate-600">{textoPeriodo(periodo)}</p>
       </div>
       <LogoImpressao />
     </header>

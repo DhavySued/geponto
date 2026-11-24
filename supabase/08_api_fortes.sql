@@ -1232,8 +1232,9 @@ begin
                           filter (where not t.banco_horas and not t.falta), 0)::int                as atraso_folha_min,
                  coalesce(sum(t.debito_min - least(t.atraso_min + t.saida_antecipada_min, t.debito_min))
                           filter (where not t.banco_horas and not t.falta), 0)::int                as desconto_min,
-                 -- DSR perdido: semanas (dom–sáb) com falta não justificada
-                 count(distinct date_trunc('week', t.data + 1)) filter (where t.falta)            as dsr_perdidos,
+                 -- DSR perdido: semanas (dom–sáb) com falta não justificada em dia útil da jornada
+                 count(distinct date_trunc('week', t.data + 1))
+                   filter (where t.falta and fn_dia_util(t.jornada_id, t.data, t.escala))            as dsr_perdidos,
                  coalesce(sum(t.banco_min) filter (where t.banco_horas), 0)::int                   as bh_periodo_min,
                  (select coalesce(sum(bh.minutos), 0) from banco_horas bh
                    where bh.colaborador_id = c.id and bh.data <= p_fim)::int                       as bh_saldo_min,
@@ -1426,6 +1427,188 @@ begin
           having count(b.id) > 0
               or (c.controla_ponto and coalesce(c.data_desligamento, p_ini) >= p_ini)
         ) x), '[]'::jsonb));
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Detalhamento do Banco de Horas: por colaborador, dia a dia, as batidas, o previsto, o trabalhado,
+-- o que entrou no banco (apuração, ajustes e conversões) e o saldo acumulado. Até 92 dias.
+-- Os valores do banco vêm dos lançamentos gravados: fecham com o Resumo, inclusive em períodos fechados.
+-- -----------------------------------------------------------------------------
+create or replace function api_relatorio_banco_horas_detalhe(
+  p_token text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_departamento uuid default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_ate date := least(p_fim, fn_hoje() - 1);
+  v_tz  text := fn_fuso();
+  v_um  uuid := case when cardinality(p_colaboradores) = 1 then p_colaboradores[1] end;
+begin
+  perform fn_auth(p_token, 'relatorio_banco_horas_detalhe');
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 91 then raise exception 'Selecione um período de até 92 dias (três meses).'; end if;
+  perform fn_banco_horas_atualizar();
+  return jsonb_build_object(
+    'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim, 'apurado_ate', v_ate),
+    'itens', coalesce((
+      with col as materialized (
+        select c.id, c.nome, c.matricula, d.nome as departamento, g.nome as cargo,
+               coalesce((select sum(b.minutos) from banco_horas b
+                          where b.colaborador_id = c.id and b.data < p_ini), 0)::int as saldo_anterior
+          from colaboradores c
+          left join departamentos d on d.id = c.departamento_id
+          left join cargos g        on g.id = c.cargo_id
+         where fn_visivel(c.id)
+           and fn_filtro_colaborador(c.id, null, p_colaboradores)
+           and (p_departamento is null or c.departamento_id = p_departamento)
+           and (exists (select 1 from banco_horas b where b.colaborador_id = c.id and b.data <= p_fim)
+                or (c.controla_ponto and coalesce(c.data_desligamento, p_ini) >= p_ini))
+      ),
+      apu as materialized (
+        select a.* from fn_apuracao(p_ini, v_ate, v_um) a join col on col.id = a.colaborador_id
+      ),
+      bat as materialized (
+        select b.colaborador_id, b.data_referencia as data,
+               jsonb_agg(jsonb_build_object(
+                 'hora', to_char(b.data_hora at time zone v_tz, 'HH24:MI'),
+                 'sentido', b.sentido, 'turno', b.turno, 'manual', b.origem = 'manual')
+                 order by b.data_hora, b.id) as batidas
+          from fn_batidas_periodo(p_ini, v_ate, v_um) b
+          join col on col.id = b.colaborador_id
+         where b.status = 'valida'
+         group by b.colaborador_id, b.data_referencia
+      ),
+      lan as materialized (
+        select b.colaborador_id, b.data,
+               coalesce(sum(b.minutos) filter (where b.origem = 'automatico'), 0)::int as banco_min,
+               max(b.descricao) filter (where b.origem = 'automatico') as descricao,
+               coalesce(jsonb_agg(jsonb_build_object('tipo', b.tipo, 'minutos', b.minutos, 'descricao', b.descricao)
+                                  order by b.created_at, b.id) filter (where b.origem <> 'automatico'), '[]'::jsonb) as manuais,
+               sum(b.minutos)::int as total
+          from banco_horas b
+          join col on col.id = b.colaborador_id
+         where b.data between p_ini and p_fim
+         group by b.colaborador_id, b.data
+      ),
+      chave as (
+        select colaborador_id, data from apu
+         where previsto_min > 0 or qtd_batidas > 0 or ocorrencia like 'ausencia:%'
+        union select colaborador_id, data from lan
+        union select colaborador_id, data from bat
+      ),
+      dia as (
+        select k.colaborador_id, k.data, a.previsto_min, a.trabalhado_min, a.saldo_min, a.ocorrencia,
+               coalesce(a.pre_assinalado, false) as pre_assinalado, a.escala, coalesce(a.fechado, false) as fechado,
+               a.banco_horas, bat.batidas, l.descricao, l.manuais,
+               coalesce(l.banco_min, 0) as banco_min,
+               col.saldo_anterior
+                 + sum(coalesce(l.total, 0)) over (partition by k.colaborador_id order by k.data) as saldo_acumulado
+          from chave k
+          join col        on col.id = k.colaborador_id
+          left join apu a on a.colaborador_id = k.colaborador_id and a.data = k.data
+          left join bat   on bat.colaborador_id = k.colaborador_id and bat.data = k.data
+          left join lan l on l.colaborador_id = k.colaborador_id and l.data = k.data
+      ),
+      dias as (
+        select x.colaborador_id,
+               jsonb_agg(jsonb_build_object(
+                 'data', x.data, 'horario', fn_horario_dia(x.colaborador_id, x.data),
+                 'feriado', (select f.descricao from feriados f where f.data = x.data),
+                 'escala', x.escala, 'ocorrencia', x.ocorrencia, 'batidas', coalesce(x.batidas, '[]'::jsonb),
+                 'pre_assinalado', x.pre_assinalado, 'previsto_min', x.previsto_min,
+                 'trabalhado_min', x.trabalhado_min, 'saldo_min', x.saldo_min,
+                 'banco_horas', x.banco_horas, 'banco_min', x.banco_min,
+                 'descricao', x.descricao, 'lancamentos', coalesce(x.manuais, '[]'::jsonb),
+                 'saldo_acumulado', x.saldo_acumulado, 'fechado', x.fechado) order by x.data) as dias
+          from dia x
+         group by x.colaborador_id
+      )
+      select jsonb_agg(jsonb_build_object(
+               'colaborador_id', col.id, 'nome', col.nome, 'matricula', col.matricula,
+               'departamento', col.departamento, 'cargo', col.cargo, 'saldo_anterior', col.saldo_anterior,
+               'saldo_final', col.saldo_anterior
+                 + coalesce((select sum(l.total) from lan l where l.colaborador_id = col.id), 0),
+               'dias', coalesce(dias.dias, '[]'::jsonb)) order by col.nome, col.id)
+        from col left join dias on dias.colaborador_id = col.id), '[]'::jsonb));
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- Relatórios de VT e de VA: dias marcados na jornada para o benefício, por colaborador que o recebe
+-- (tipo da situação vigente no dia), e se o dia conta. Conta com um turno completo ou com os dois,
+-- conforme a configuração; dia previsto com um turno só precisa apenas dele. Só dias encerrados; até 92 dias.
+-- -----------------------------------------------------------------------------
+create or replace function api_relatorio_beneficio(
+  p_token text, p_tipo text, p_ini date, p_fim date, p_colaboradores uuid[] default null, p_departamento uuid default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_ate date := least(p_fim, fn_hoje() - 1);
+  v_tz  text := fn_fuso();
+  v_turnos text := coalesce((select beneficio_turnos from empresa where id = 1), 'um');
+  v_um  uuid := case when cardinality(p_colaboradores) = 1 then p_colaboradores[1] end;
+begin
+  if p_tipo is null or p_tipo not in ('vt', 'va') then raise exception 'Informe se o relatório é de VT ou de VA.'; end if;
+  perform fn_auth(p_token, 'relatorio_' || p_tipo);
+  if p_ini is null or p_fim is null or p_fim < p_ini then raise exception 'Informe um período válido.'; end if;
+  if p_fim - p_ini > 91 then raise exception 'Selecione um período de até 92 dias (três meses).'; end if;
+  return jsonb_build_object(
+    'periodo', jsonb_build_object('inicio', p_ini, 'fim', p_fim, 'apurado_ate', v_ate),
+    'turnos', v_turnos,
+    'itens', coalesce((
+      with apu as materialized (
+        select a.*, c.nome, c.matricula, d.nome as departamento,
+               t.id as tipo_id, t.nome as tipo_nome, t.codigo, t.valor_diario
+          from fn_apuracao(p_ini, v_ate, v_um) a
+          join colaboradores c      on c.id = a.colaborador_id
+          left join departamentos d on d.id = c.departamento_id
+          join lateral (
+            select s.tipo_vt_id, s.tipo_va_id from colaborador_situacoes s
+             where s.colaborador_id = a.colaborador_id and s.data_inicio <= a.data
+             order by s.data_inicio desc limit 1) s on true
+          join tipos_beneficio t    on t.id = case p_tipo when 'vt' then s.tipo_vt_id else s.tipo_va_id end
+          join jornadas j           on j.id = a.jornada_id
+          join jornada_dias jd      on jd.jornada_id = j.id
+                                   and jd.dia_semana = fn_jornada_indice(j.tipo, j.ciclo_dias, j.data_base, a.data)
+         where case p_tipo when 'vt' then jd.recebe_vt else jd.recebe_va end
+           and fn_visivel(c.id)
+           and fn_filtro_colaborador(c.id, null, p_colaboradores)
+           and (p_departamento is null or c.departamento_id = p_departamento)
+      ),
+      bat as materialized (
+        select x.colaborador_id, x.data_referencia as data,
+               count(distinct x.turno) filter (where x.sentido = 'E' and x.ps = 'S' and x.pt = x.turno)::int as turnos,
+               jsonb_agg(jsonb_build_object('hora', to_char(x.data_hora at time zone v_tz, 'HH24:MI'),
+                                            'sentido', x.sentido, 'turno', x.turno, 'manual', x.origem = 'manual')
+                         order by x.data_hora, x.id) as batidas
+          from (select b.*, lead(b.sentido) over w as ps, lead(b.turno) over w as pt
+                  from fn_batidas_periodo(p_ini, v_ate, v_um) b
+                 where b.status = 'valida'
+                window w as (partition by b.colaborador_id, b.data_referencia order by b.data_hora, b.id)) x
+         group by x.colaborador_id, x.data_referencia
+      ),
+      dia as (
+        select a.*, coalesce(b.batidas, '[]'::jsonb) as batidas,
+               case when a.pre_assinalado then 2 else coalesce(b.turnos, 0) end as turnos,
+               case when jd.folga or jd.entrada is null or jd.saida_intervalo is null then 1 else 2 end as turnos_previstos
+          from apu a
+          left join bat b on b.colaborador_id = a.colaborador_id and b.data = a.data
+          left join lateral fn_jornada_dia(a.colaborador_id, a.data) jd on true
+      ),
+      res as (
+        select x.*, x.turnos >= case when v_turnos = 'dois' then x.turnos_previstos else 1 end as computa from dia x
+      )
+      select jsonb_agg(jsonb_build_object(
+               'colaborador_id', g.colaborador_id, 'nome', g.nome, 'matricula', g.matricula, 'departamento', g.departamento,
+               'dias_marcados', g.marcados, 'dias_computados', g.computados, 'valor_total', g.valor, 'dias', g.dias)
+             order by g.nome, g.colaborador_id)
+        from (
+          select r.colaborador_id, r.nome, r.matricula, r.departamento,
+                 count(*) as marcados, count(*) filter (where r.computa) as computados,
+                 coalesce(sum(r.valor_diario) filter (where r.computa), 0) as valor,
+                 jsonb_agg(jsonb_build_object(
+                   'data', r.data, 'tipo', r.tipo_nome, 'codigo', r.codigo, 'valor_diario', r.valor_diario,
+                   'batidas', r.batidas, 'pre_assinalado', r.pre_assinalado, 'turnos', r.turnos,
+                   'turnos_previstos', r.turnos_previstos, 'trabalhado_min', r.trabalhado_min,
+                   'ocorrencia', r.ocorrencia, 'escala', r.escala, 'computa', r.computa) order by r.data) as dias
+            from res r
+           group by r.colaborador_id, r.nome, r.matricula, r.departamento) g), '[]'::jsonb));
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -1658,6 +1841,8 @@ grant execute on function api_relatorio_faltas(text, date, date, uuid[], uuid)  
 grant execute on function api_relatorio_assiduidade(text, date, date, uuid[], uuid)     to anon, authenticated;
 grant execute on function api_relatorio_folgas(text, date, date, uuid[], uuid)          to anon, authenticated;
 grant execute on function api_relatorio_banco_horas(text, date, date, uuid[], uuid)     to anon, authenticated;
+grant execute on function api_relatorio_banco_horas_detalhe(text, date, date, uuid[], uuid) to anon, authenticated;
+grant execute on function api_relatorio_beneficio(text, text, date, date, uuid[], uuid) to anon, authenticated;
 grant execute on function api_relatorio_escalas(text, date, date, uuid[], uuid, text)    to anon, authenticated;
 
 -- Atualiza o cache de funções da API do Supabase (PostgREST) para as telas enxergarem as funções novas

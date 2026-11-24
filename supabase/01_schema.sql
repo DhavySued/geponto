@@ -1040,6 +1040,47 @@ create trigger trg_colaborador_situacoes_updated before update on colaborador_si
 alter table colaborador_situacoes enable row level security;
 revoke all on colaborador_situacoes from anon, authenticated;
 
+-- -----------------------------------------------------------------------------
+-- VT e VA: tipos (nome, código, valor diário) e o que cada colaborador recebe, por situação.
+-- tipo_vt_id / tipo_va_id vazio = não recebe.
+-- -----------------------------------------------------------------------------
+create table if not exists tipos_beneficio (
+  id            uuid primary key default gen_random_uuid(),
+  nome          text not null,
+  codigo        text not null,
+  tipo          text not null check (tipo in ('vt', 'va')),
+  valor_diario  numeric(10,2) not null default 0 check (valor_diario >= 0),
+  ativo         boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  unique (tipo, codigo)
+);
+alter table tipos_beneficio enable row level security;
+revoke all on tipos_beneficio from anon, authenticated;
+drop trigger if exists trg_tipos_beneficio_updated on tipos_beneficio;
+create trigger trg_tipos_beneficio_updated before update on tipos_beneficio
+  for each row execute function fn_set_updated_at();
+
+alter table colaborador_situacoes add column if not exists tipo_vt_id uuid references tipos_beneficio(id);
+alter table colaborador_situacoes add column if not exists tipo_va_id uuid references tipos_beneficio(id);
+
+-- Por dia da jornada: dia útil (controle de DSR) e se o dia dá direito a VT e a VA.
+-- Jornadas que já existiam: os dias de trabalho ficam marcados; as folgas, não.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'jornada_dias' and column_name = 'dia_util') then
+    alter table jornada_dias add column dia_util  boolean not null default true;
+    alter table jornada_dias add column recebe_vt boolean not null default true;
+    alter table jornada_dias add column recebe_va boolean not null default true;
+    update jornada_dias set dia_util = false, recebe_vt = false, recebe_va = false where folga;
+  end if;
+end $$;
+
+-- Quando o dia conta para VT/VA: 'um' turno trabalhado ou os 'dois' turnos
+alter table empresa add column if not exists beneficio_turnos text not null default 'um'
+  check (beneficio_turnos in ('um', 'dois'));
+
 -- Colaboradores que já existiam: uma situação na admissão e uma a cada troca de jornada já
 -- registrada; a situação atual (férias, afastado) entra na data em que passou a valer.
 insert into colaborador_situacoes (colaborador_id, data_inicio, situacao, cargo_id, departamento_id,
@@ -1298,6 +1339,7 @@ alter table batidas               enable row level security;
 alter table batida_ajustes        enable row level security;
 alter table motivos_batida        enable row level security;
 alter table tipos_licenca         enable row level security;
+alter table tipos_beneficio       enable row level security;
 alter table banco_horas           enable row level security;
 alter table fechamentos           enable row level security;
 alter table solicitacoes          enable row level security;
@@ -1380,7 +1422,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['empresa', 'empresas', 'perfis', 'perfil_permissoes', 'usuarios', 'usuario_empresas', 'departamentos', 'cargos', 'jornadas', 'jornada_dias', 'feriados', 'colaboradores', 'colaborador_situacoes', 'ausencias', 'escalas', 'escala_lancamentos', 'batidas', 'locais_ponto', 'motivos_batida', 'tipos_licenca', 'banco_horas', 'fechamentos', 'solicitacoes', 'eventos_folha', 'perfis_eventos', 'perfil_evento_he', 'justificativas', 'faltas_folha'] loop
+  foreach t in array array['empresa', 'empresas', 'perfis', 'perfil_permissoes', 'usuarios', 'usuario_empresas', 'departamentos', 'cargos', 'jornadas', 'jornada_dias', 'feriados', 'colaboradores', 'colaborador_situacoes', 'ausencias', 'escalas', 'escala_lancamentos', 'batidas', 'locais_ponto', 'motivos_batida', 'tipos_licenca', 'tipos_beneficio', 'banco_horas', 'fechamentos', 'solicitacoes', 'eventos_folha', 'perfis_eventos', 'perfil_evento_he', 'justificativas', 'faltas_folha'] loop
     execute format('drop trigger if exists trg_auditoria on %I', t);
     execute format('create trigger trg_auditoria after insert or update or delete on %I for each row execute function fn_auditar()', t);
   end loop;

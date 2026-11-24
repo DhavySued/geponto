@@ -427,7 +427,7 @@ function SecaoDia({
 }
 
 export default function BancoHoras() {
-  const { pode } = useAuth();
+  const { pode, usuario } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const podeEditar = pode('banco_horas', 'editar');
@@ -500,7 +500,7 @@ export default function BancoHoras() {
     if (!dados || !filtro) return;
     setGerandoPdf(true);
     try {
-      await gerarPdfBancoHoras(dados, filtro);
+      await gerarPdfBancoHoras(dados, filtro, usuario?.empresa ?? null);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Não foi possível gerar o PDF.', 'erro');
     } finally {

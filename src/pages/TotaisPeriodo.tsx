@@ -1,6 +1,7 @@
 import clsx from 'clsx';
-import { AlertTriangle, Download, FileSpreadsheet, Save, Search, Settings2 } from 'lucide-react';
+import { AlertTriangle, Download, FileSpreadsheet, Printer, Save, Search, Settings2 } from 'lucide-react';
 import { useState } from 'react';
+import { CabecalhoImpressao, useCabecalhoCsv } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -50,6 +51,7 @@ const COLUNAS_FIM: Coluna[] = [
 export default function TotaisPeriodo() {
   const toast = useToast();
   const { aux, erro: erroAux } = useFiltrosAux();
+  const cabecalhoCsv = useCabecalhoCsv();
   const [periodo, setPeriodo] = useState(() => competencia(-1));
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [dados, setDados] = useState<TotaisPeriodoT | null>(null);
@@ -100,6 +102,8 @@ export default function TotaisPeriodo() {
     }
   };
 
+  const consultado = dados ? { ini: dados.periodo.inicio, fim: dados.periodo.fim } : periodo;
+
   const exportarFolha = () => {
     if (!dados) return;
     const semCodigo = dados.eventos.filter((e) => e.ativo && !e.codigo);
@@ -109,7 +113,7 @@ export default function TotaisPeriodo() {
       return;
     }
     const { conteudo, linhas } = gerarArquivoFolha(dados.colaboradores, dados.eventos, formato, layout);
-    baixarArquivo(`folha_${periodo.ini}_${periodo.fim}.${layout}`, conteudo, layout === 'csv' ? 'text/csv' : 'text/plain');
+    baixarArquivo(`folha_${consultado.ini}_${consultado.fim}.${layout}`, conteudo, layout === 'csv' ? 'text/csv' : 'text/plain');
     toast(`Arquivo gerado com ${linhas} lançamento(s).${semCodigo.length ? ` ${semCodigo.length} evento(s) sem código ficaram de fora.` : ''}`);
   };
 
@@ -117,7 +121,8 @@ export default function TotaisPeriodo() {
     if (!dados) return;
     const cab = ['Matrícula', 'Nome', 'Departamento', ...COLUNAS.map((c) => c.titulo)];
     const linhas = dados.colaboradores.map((t) => [t.matricula, t.nome, t.departamento ?? '', ...COLUNAS.map((c) => c.valor(t))]);
-    baixarArquivo(`totais_${periodo.ini}_${periodo.fim}.csv`, [cab, ...linhas].map((l) => l.join(';')).join('\r\n'), 'text/csv');
+    baixarArquivo(`totais_${consultado.ini}_${consultado.fim}.csv`,
+      [...cabecalhoCsv('Totais do período', consultado), ...[cab, ...linhas].map((l) => l.join(';'))].join('\r\n'), 'text/csv');
   };
 
   const soma = (f: (t: TotaisColaborador) => number) => dados?.colaboradores.reduce((s, t) => s + f(t), 0) ?? 0;
@@ -128,7 +133,7 @@ export default function TotaisPeriodo() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between print:hidden">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Totais e exportação para a folha</h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -143,11 +148,14 @@ export default function TotaisPeriodo() {
             <Button variant="secondary" onClick={exportarPlanilha}>
               <FileSpreadsheet className="h-4 w-4" /> Planilha
             </Button>
+            <Button variant="secondary" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" /> Imprimir
+            </Button>
           </div>
         )}
       </div>
 
-      <section className="card p-5">
+      <section className="card p-5 print:hidden">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[180px_180px_1fr_1fr_auto] lg:items-end">
           <Field label="De">
             <input type="date" className="input" value={periodo.ini} max={periodo.fim} onChange={(e) => e.target.value && setPeriodo((p) => ({ ...p, ini: e.target.value }))} />
@@ -184,6 +192,7 @@ export default function TotaisPeriodo() {
         </div>
       ) : (
         <>
+          <CabecalhoImpressao titulo="Totais do período" periodo={consultado} />
           <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
             {[
               ['Horas extras', formatMinutos(soma((t) => t.he_min ?? 0)), resumoHe],
@@ -207,8 +216,8 @@ export default function TotaisPeriodo() {
             </div>
           )}
 
-          <div className="card overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-sm">
+          <div className="card overflow-x-auto print:overflow-visible print:shadow-none print:ring-0">
+            <table className="w-full min-w-[1100px] text-sm print:min-w-0 print:text-[10px]">
               <thead>
                 <tr className="bg-slate-50/70 text-left text-xs text-slate-400">
                   <th className="px-5 py-2.5 font-medium">Colaborador</th>
@@ -238,7 +247,7 @@ export default function TotaisPeriodo() {
             </table>
           </div>
 
-          <section className="card flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
+          <section className="card flex flex-col gap-4 p-5 print:hidden lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h3 className="text-[15px] font-semibold text-slate-900">Arquivo para a folha de pagamento</h3>
               <p className="mt-0.5 text-xs text-slate-500">

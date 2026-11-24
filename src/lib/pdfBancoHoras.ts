@@ -26,7 +26,8 @@ const TIPOS_LANCAMENTO: Record<string, string> = {
  * Gera o relatório do banco de horas em PDF (uma tarja por colaborador e uma seção por dia,
  * com previsto × realizado de cada marcação, o resultado de cada turno e o saldo) e baixa o arquivo.
  */
-export async function gerarPdfBancoHoras(dados: BancoHorasDetalhe[], periodo: { ini: string; fim: string }) {
+export async function gerarPdfBancoHoras(dados: BancoHorasDetalhe[], periodo: { ini: string; fim: string },
+  empresa: { razao_social: string; cnpj: string | null } | null) {
   const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const M = 12;
@@ -53,6 +54,9 @@ export async function gerarPdfBancoHoras(dados: BancoHorasDetalhe[], periodo: { 
     doc.setFont('helvetica', 'bold').setFontSize(13).setTextColor(...AZUL);
     doc.text('Banco de horas — relatório diário', M, y + 4);
     doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...CINZA);
+    const cnpj = (empresa?.cnpj ?? '').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    doc.text(`${empresa?.razao_social ?? '—'} · CNPJ ${cnpj || '—'}`, M, y + 9);
+    y += 4;
     doc.text(`Período ${dataBR(periodo.ini)} a ${dataBR(periodo.fim)} · emitido em ${emitido}`, M, y + 9);
     y += 13;
 

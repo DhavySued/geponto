@@ -1,6 +1,7 @@
 import clsx from 'clsx';
-import { AlertOctagon, AlertTriangle, Search, ShieldCheck } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, Printer, Search, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -27,6 +28,7 @@ export default function QuebraRegras() {
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [regra, setRegra] = useState<RegraQuebrada | ''>('');
   const [dados, setDados] = useState<QuebraRegra[] | null>(null);
+  const [consultado, setConsultado] = useState(periodo);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
 
@@ -42,6 +44,7 @@ export default function QuebraRegras() {
           p_departamento: filtros.departamento || null,
         }),
       );
+      setConsultado(periodo);
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao consultar.');
     } finally {
@@ -58,6 +61,7 @@ export default function QuebraRegras() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Quebra de regras</h2>
         <p className="mt-1 text-sm text-slate-500">
@@ -65,8 +69,12 @@ export default function QuebraRegras() {
           extras acima do limite da jornada.
         </p>
       </div>
+      {dados && dados.length > 0 && (
+        <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> Imprimir</Button>
+      )}
+      </div>
 
-      <section className="card p-5">
+      <section className="card p-5 print:hidden">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[180px_180px_1fr_1fr_auto] lg:items-end">
           <Field label="De">
             <input type="date" className="input" value={periodo.ini} max={periodo.fim} onChange={(e) => e.target.value && setPeriodo((p) => ({ ...p, ini: e.target.value }))} />
@@ -106,7 +114,8 @@ export default function QuebraRegras() {
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap gap-2">
+          <CabecalhoImpressao titulo="Quebra de regras" periodo={consultado} />
+          <div className="flex flex-wrap gap-2 print:hidden">
             <button onClick={() => setRegra('')}
               className={clsx('rounded-xl px-3 py-2 text-xs font-medium ring-1 transition', !regra ? 'bg-primary-700 text-white ring-primary-700' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50')}>
               Todas · {dados.length}
@@ -119,8 +128,8 @@ export default function QuebraRegras() {
             ))}
           </div>
 
-          <div className="card overflow-x-auto">
-            <table className="w-full min-w-[820px] text-sm">
+          <div className="card overflow-x-auto print:overflow-visible print:shadow-none print:ring-0">
+            <table className="w-full min-w-[820px] text-sm print:min-w-0 print:text-xs">
               <thead>
                 <tr className="bg-slate-50/70 text-left text-xs text-slate-400">
                   <th className="px-5 py-2.5 font-medium">Colaborador</th>

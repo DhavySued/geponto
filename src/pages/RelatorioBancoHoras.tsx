@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { AlertTriangle, Download, Hourglass, Printer, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { CabecalhoImpressao } from '@/components/relatorios/CabecalhoImpressao';
+import { CabecalhoImpressao, useCabecalhoCsv } from '@/components/relatorios/CabecalhoImpressao';
 import { Button } from '@/components/ui/Button';
 import { ComboboxChips } from '@/components/ui/ComboboxChips';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -27,6 +27,7 @@ const tom = (m: number) => (m > 0 ? 'text-emerald-700' : m < 0 ? 'text-rose-600'
 
 export default function RelatorioBancoHoras() {
   const { aux, erro: erroAux } = useFiltrosAux();
+  const cabecalhoCsv = useCabecalhoCsv();
   const [periodo, setPeriodo] = useState(() => competencia());
   const [filtros, setFiltros] = useState({ colaboradores: [] as string[], departamento: '' });
   const [dados, setDados] = useState<Dados | null>(null);
@@ -52,6 +53,8 @@ export default function RelatorioBancoHoras() {
     }
   };
 
+  // Período do que está na tela (os campos podem ter mudado depois da consulta)
+  const consultado = dados ? { ini: dados.periodo.inicio, fim: dados.periodo.fim } : periodo;
   const itens = dados?.itens ?? [];
   const visiveis = itens.filter((i) =>
     !ver || (ver === 'positivo' ? i.saldo_final > 0 : ver === 'negativo' ? i.saldo_final < 0 : i.saldo_final === 0));
@@ -72,7 +75,7 @@ export default function RelatorioBancoHoras() {
       ...visiveis.map((i) => [i.matricula, i.nome, i.departamento ?? '', i.cargo ?? '',
         ...COLUNAS.map((c) => String(i[c.chave])), formatMinutos(i.saldo_final)].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')),
     ];
-    baixarArquivo(`banco_horas_${periodo.ini}_${periodo.fim}.csv`, linhas.join('\r\n'), 'text/csv');
+    baixarArquivo(`resumo_banco_horas_${consultado.ini}_${consultado.fim}.csv`, [...cabecalhoCsv('Resumo do banco de horas', consultado), ...linhas].join('\r\n'), 'text/csv');
   };
 
   const chip = (ativo: boolean) =>
@@ -81,9 +84,9 @@ export default function RelatorioBancoHoras() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Relatório de banco de horas</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Resumo do banco de horas</h2>
           <p className="mt-1 text-sm text-slate-500">
             Saldo de cada colaborador no período: o que vinha de antes, os créditos e débitos do dia a dia, ajustes, conversões e o saldo final.
           </p>
@@ -130,7 +133,7 @@ export default function RelatorioBancoHoras() {
         <div className="card"><EmptyState icon={Hourglass} titulo="Nenhum colaborador encontrado" descricao="Não há banco de horas com esses filtros." /></div>
       ) : (
         <>
-          <CabecalhoImpressao titulo="Relatório de banco de horas" periodo={periodo} />
+          <CabecalhoImpressao titulo="Resumo do banco de horas" periodo={consultado} />
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setVer('')} className={chip(!ver)}>Todos · {itens.length}</button>
             {contagem.positivo > 0 && <button onClick={() => setVer('positivo')} className={chip(ver === 'positivo')}>Saldo positivo · {contagem.positivo}</button>}

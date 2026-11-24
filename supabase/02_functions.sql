@@ -511,6 +511,40 @@ returns text language sql stable set search_path = public as $$
    where j.id = p_jornada;
 $$;
 
+-- Dia útil para o DSR: o marcado na jornada; escala de trabalho no dia conta como útil
+create or replace function fn_dia_util(p_jornada uuid, p_data date, p_escala text)
+returns boolean language sql stable set search_path = public as $$
+  select case when p_escala = 'trabalho' then true
+              else coalesce((select jd.dia_util
+                               from jornadas j
+                               join jornada_dias jd on jd.jornada_id = j.id
+                                                   and jd.dia_semana = fn_jornada_indice(j.tipo, j.ciclo_dias, j.data_base, p_data)
+                              where j.id = p_jornada), true) end;
+$$;
+
+-- Tipos de VT/VA ativos, para os formulários
+create or replace function fn_tipos_beneficio_json()
+returns jsonb language sql stable set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'nome', t.nome, 'codigo', t.codigo, 'tipo', t.tipo,
+                                               'valor_diario', t.valor_diario) order by t.tipo, t.nome), '[]'::jsonb)
+    from tipos_beneficio t where t.ativo;
+$$;
+
+-- Tipo de VT/VA informado no formulário (recebe_vt + tipo_vt_id). Sem o campo, mantém o atual.
+create or replace function fn_beneficio_informado(d jsonb, p_tipo text, p_atual uuid)
+returns uuid language plpgsql stable set search_path = public as $$
+declare v_id uuid;
+begin
+  if not d ? ('recebe_' || p_tipo) then return p_atual; end if;
+  if not coalesce((d ->> ('recebe_' || p_tipo))::boolean, false) then return null; end if;
+  v_id := fn_txt(d, 'tipo_' || p_tipo || '_id')::uuid;
+  if v_id is null then raise exception 'Escolha o tipo de % do colaborador.', upper(p_tipo); end if;
+  if not exists (select 1 from tipos_beneficio where id = v_id and tipo = p_tipo and (ativo or id = p_atual)) then
+    raise exception 'Escolha um tipo de % ativo.', upper(p_tipo);
+  end if;
+  return v_id;
+end $$;
+
 -- Minutos de relógio dentro da faixa noturna (padrão 22:00–05:00) entre dois instantes locais
 create or replace function fn_minutos_noturnos(p_ini timestamp, p_fim timestamp, p_n_ini time, p_n_fim time)
 returns integer language sql immutable as $$
